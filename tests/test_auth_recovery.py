@@ -5,7 +5,6 @@ import os
 import stat
 import tempfile
 import pathlib
-import unittest
 import unittest.mock
 
 from omini_rtksync import cli as omini_rtksync_cli

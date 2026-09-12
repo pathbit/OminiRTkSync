@@ -16,7 +16,6 @@ Cada teste aqui nasceu de um apontamento da revisão automática do PR:
 import os
 import sqlite3
 import tempfile
-import unittest
 import unittest.mock
 
 from omini_rtksync.credential_check import (

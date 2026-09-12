@@ -81,10 +81,17 @@ def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LA
     "nada precisava ser renovado" de "a renovação falhou".
     """
     if conn.is_local:
+        # Quem diz se a instância respondeu é a sonda, não o tamanho do
+        # catálogo: uma instalação nova, de pé e sem nenhum modelo baixado,
+        # devolve lista vazia com HTTP 200. Contar modelos aqui a anunciava
+        # como inalcançável, contradizendo o "ativa" que o próprio ciclo
+        # acabara de gravar no banco.
+        if conn.data.get("testStatus") == "unreachable":
+            return translate("reason.local_unreachable", lang)
         models = conn.local_models
         if models:
             return translate("reason.local_ok", lang, count=len(models))
-        return translate("reason.local_unreachable", lang)
+        return translate("reason.local_empty", lang)
 
     if not conn.is_oauth:
         return translate("reason.api_key", lang)
