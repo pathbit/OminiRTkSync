@@ -369,6 +369,11 @@ def update_connection_health(
                     if isinstance(carregado, dict):
                         d = carregado
                 except Exception:
+                    # Coluna corrompida ou em formato inesperado: seguimos com o
+                    # dicionário vazio e regravamos a linha com os campos de
+                    # saúde. Abortar aqui faria uma linha ilegível bloquear para
+                    # sempre a gravação da sondagem — justamente na conexão que
+                    # mais precisa ser diagnosticada.
                     pass
             if test_status:
                 d["testStatus"] = test_status
