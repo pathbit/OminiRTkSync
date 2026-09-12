@@ -31,7 +31,11 @@ class OmniSyncEngine:
         )
         self.google_provider = GoogleProvider(credential_paths=settings.credential_paths, discovery=self.discovery)
         self.oauth_provider = GenericOAuthProvider(discovery=self.discovery)
-        self.api_provider = ApiKeyProvider(discovery=self.discovery)
+        self.api_provider = ApiKeyProvider(
+            discovery=self.discovery,
+            validate_credentials=settings.validate_credentials,
+            validation_timeout=settings.validation_timeout,
+        )
         self.local_provider = LocalProvider()
 
     def sync_all(self):

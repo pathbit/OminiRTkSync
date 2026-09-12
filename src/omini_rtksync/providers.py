@@ -8,6 +8,16 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from .credential_check import (
+    DEFAULT_TIMEOUT_SECONDS,
+    STATE_INVALID,
+    STATE_RATE_LIMITED,
+    STATE_UNREACHABLE,
+    STATE_VALID,
+    check_connection,
+)
+from .models import ConnectionRecord
+
 
 class GoogleProvider:
     """Renovador OAuth para contas Google (Antigravity / Gemini CLI) no OmniRoute."""
@@ -184,8 +194,18 @@ class GenericOAuthProvider:
 class ApiKeyProvider:
     """Gerenciador e sanitizador para conexões de API Key no OmniRoute."""
 
-    def __init__(self, discovery: Optional[Any] = None):
+    def __init__(
+        self,
+        discovery: Optional[Any] = None,
+        validate_credentials: bool = False,
+        validation_timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        opener: Optional[Any] = None,
+    ):
         self.discovery = discovery
+        # Desligado por padrão: montar o provider não pode gerar tráfego de saída.
+        self.validate_credentials = validate_credentials
+        self.validation_timeout = validation_timeout
+        self.opener = opener
 
     def can_handle(self, conn: Dict[str, Any]) -> bool:
         return bool(conn.get("hasApiKey"))
@@ -205,8 +225,31 @@ class ApiKeyProvider:
                 src = local.get("source_path", "host")
                 messages.append(f"Chave de API sincronizada a partir do host ({src})")
 
+        # 2. Pergunta ao provedor se a chave ainda é aceita. Antes daqui a conexão
+        # era declarada "operacional e ativa" sem nenhuma verificação.
+        if self.validate_credentials:
+            record = ConnectionRecord.from_row(res)
+            result = check_connection(
+                record, timeout=self.validation_timeout, opener=self.opener
+            )
+            res.update(result.to_dict())
+            modified = True
+
+            if result.state == STATE_VALID:
+                res["testStatus"] = "active"
+                messages.append(f"Chave aceita pelo provedor ({result.detail})")
+            elif result.state == STATE_INVALID:
+                res["testStatus"] = "invalid"
+                messages.append(f"Chave RECUSADA pelo provedor ({result.detail})")
+            elif result.state == STATE_RATE_LIMITED:
+                messages.append(f"Provedor aplicou rate limit na validação ({result.detail})")
+            elif result.state == STATE_UNREACHABLE:
+                messages.append(f"Provedor inacessível, chave não verificada: {result.detail}")
+            else:
+                messages.append(result.detail or "Credencial não verificável")
+
         if not messages:
-            messages.append("Chave de API operacional e ativa")
+            messages.append("Chave de API inalterada")
 
         return modified, res if modified else None, messages
 

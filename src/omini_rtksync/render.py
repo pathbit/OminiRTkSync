@@ -20,6 +20,13 @@ BOOTSTRAP_ICONS = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/boot
 FLAG_ICONS = "https://cdn.jsdelivr.net/npm/flag-icons@7.2.3/css/flag-icons.min.css"
 BOOTSTRAP_JS = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
 JQUERY_JS = "https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
+# Tipografia: Google Fonts, com pilha de sistema como reserva se o CDN cair.
+GOOGLE_FONTS = (
+    "https://fonts.googleapis.com/css2?"
+    "family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+)
+FONT_STACK = "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+MONO_STACK = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
 # Estado semântico -> (classe do badge, ícone)
 HEALTH_PRESENTATION = {
@@ -29,6 +36,10 @@ HEALTH_PRESENTATION = {
     "rate_limited": ("text-bg-warning", "bi-pause-circle-fill"),
     "no_expiration": ("text-bg-secondary", "bi-infinity"),
     "unknown": ("text-bg-secondary", "bi-question-circle-fill"),
+    # Estados vindos da validação viva da credencial.
+    "invalid": ("text-bg-danger", "bi-shield-exclamation"),
+    "unreachable": ("text-bg-warning", "bi-plug"),
+    "not_checked": ("text-bg-secondary", "bi-dash-circle"),
 }
 
 
@@ -364,6 +375,13 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
 def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str:
     online = bool(gateway.get("online"))
     tone = "text-success" if online else "text-danger"
+    db_ok = bool(gateway.get("dbSummary"))
+    if online and db_ok:
+        diagnosis = translate("gateway.diag_ok", lang)
+    elif online:
+        diagnosis = translate("gateway.diag_db_failed", lang)
+    else:
+        diagnosis = translate("gateway.diag_gateway_failed", lang)
     icon = "bi-plug-fill" if online else "bi-plug"
     label = (
         f'ONLINE (HTTP {esc(gateway.get("statusCode", "—"))})'
@@ -398,6 +416,8 @@ def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str
             <dd class="col-7 text-end font-monospace text-truncate" title="{esc(db_path)}">
               {esc(gateway.get("dbSummary") or "—")}
             </dd>
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.diagnostics", lang))}</dt>
+            <dd class="col-7 text-end font-monospace mb-0 {tone}">{esc(diagnosis)}</dd>
           </dl>
         </div>
       </div>"""

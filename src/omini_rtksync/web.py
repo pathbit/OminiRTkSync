@@ -104,8 +104,33 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
+    def is_same_origin_request(self) -> bool:
+        """Rejeita POST disparado por outro site.
+
+        O Basic Auth é anexado automaticamente pelo navegador mesmo em um POST
+        vindo de outra origem, e um formulário urlencoded não dispara preflight.
+        Sem esta checagem, uma página maliciosa aberta na mesma máquina poderia
+        trocar a senha do painel. Não se usa Referer porque a própria página é
+        servida com Referrer-Policy: no-referrer.
+        """
+        fetch_site = self.headers.get("Sec-Fetch-Site", "")
+        if fetch_site:
+            # "none" é a navegação digitada na barra de endereços.
+            return fetch_site in ("same-origin", "none")
+
+        origin = self.headers.get("Origin", "")
+        if origin:
+            return urlparse(origin).netloc == self.headers.get("Host", "")
+
+        # Cliente que não é navegador (curl, script): não há sessão a sequestrar.
+        return True
+
     def do_POST(self):
         if not self.require_auth():
+            return
+
+        if not self.is_same_origin_request():
+            self.send_error(HTTPStatus.FORBIDDEN, "Cross-origin request rejected")
             return
 
         length = int(self.headers.get("Content-Length", 0))
@@ -204,7 +229,23 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             "currentUser": cur_user,
             "isDefaultPassword": is_default,
             "cron": cron_info,
-            "connections": conns,
+            # Projeção explícita: get_all_connections devolve accessToken,
+            # refreshToken, apiKey e a linha bruta do banco. Nada disso pode
+            # sair pela API — só os campos que o painel realmente consome.
+            "connections": [
+                {
+                    "id": c.id,
+                    "provider": c.provider,
+                    "name": c.name,
+                    "isOAuth": c.is_oauth,
+                    "hasApiKey": c.has_api_key,
+                    "isLocal": c.is_local,
+                    "expiresAtMs": c.expires_at_ms,
+                    "remainingSeconds": c.remaining_seconds,
+                    "healthStatus": c.health_status,
+                }
+                for c in (ConnectionRecord.from_row(row) for row in conns)
+            ],
             "combos": combos,
         }
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

@@ -11,9 +11,11 @@ from typing import Any, Dict, List, Optional
 
 from .normalizer import parse_expiry_to_ms
 
-# Provider names that identify a local / OpenAI-compatible instance.
+# Provider names that suggest a local instance. A marker alone is not proof:
+# "ollama" is also the name of Ollama Cloud, a hosted service that must never
+# be probed on /api/tags.
 LOCAL_PROVIDER_MARKERS = ("ollama", "vllm", "lmstudio", "llamacpp", "localai", "openai-compatible")
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal", ".local")
 
 # Threshold below which a token counts as "expiring soon" (15 min).
 EXPIRING_SOON_SECONDS = 900
@@ -51,20 +53,38 @@ class ConnectionRecord:
         return self.data.get("apiKey")
 
     @property
-    def is_local(self) -> bool:
-        """Whether the connection points at a local instance.
+    def access_token(self) -> Optional[str]:
+        return self.data.get("accessToken")
 
-        A local instance usually needs a facade API key, so checking has_api_key
-        alone would classify it as a cloud provider.
+    @property
+    def refresh_token(self) -> Optional[str]:
+        return self.data.get("refreshToken")
+
+    @property
+    def is_local(self) -> bool:
+        """Whether the connection really points at an instance on this machine.
+
+        Classification is driven by the address, not by the provider name. Only
+        when no address is declared does a marker like "openai-compatible" --
+        which has no hosted counterpart -- stand on its own.
         """
-        provider = self.provider.lower()
-        if any(marker in provider for marker in LOCAL_PROVIDER_MARKERS):
-            return True
-        base_url = str(self.base_url or "")
-        return any(host in base_url for host in LOCAL_HOSTS)
+        base_url = str(self.base_url or "").lower()
+        if base_url:
+            return any(host in base_url for host in LOCAL_HOSTS)
+        return "openai-compatible" in self.provider.lower()
 
     @property
     def base_url(self) -> Optional[str]:
+        """Endereço do provedor, onde quer que o gateway o tenha guardado.
+
+        O 9Router aninha em providerSpecificData; lendo só a raiz, instância
+        local nenhuma exibia seus modelos.
+        """
+        specific = self.data.get("providerSpecificData")
+        if isinstance(specific, dict):
+            nested = specific.get("baseUrl") or specific.get("baseURL")
+            if nested:
+                return nested
         raw = self.data.get("raw") or {}
         return (
             self.data.get("baseUrl")
@@ -95,8 +115,22 @@ class ConnectionRecord:
         return int((exp - int(time.time() * 1000)) / 1000)
 
     @property
+    def credential_state(self) -> Optional[str]:
+        """Resultado da última validação viva da credencial, quando houve uma."""
+        state = self.data.get("credentialState")
+        return str(state) if state else None
+
+    @property
     def health_status(self) -> str:
-        """Semantic classification of the connection state."""
+        """Semantic classification of the connection state.
+
+        Uma validação viva vence tudo: chave que o provedor recusa está
+        quebrada, não importa o que o gateway tenha carimbado por último.
+        """
+        probed = self.credential_state
+        if probed in ("invalid", "rate_limited", "unreachable"):
+            return probed
+
         if self.is_local:
             # unreachable is written when the model catalog does not answer.
             return "unknown" if self.data.get("testStatus") == "unreachable" else "active"
@@ -114,7 +148,8 @@ class ConnectionRecord:
         if self.has_api_key:
             if self.data.get("rateLimitedUntil"):
                 return "rate_limited"
-            return "active"
+            # Nunca sondada: dizer isso, em vez de alegar saúde que ninguém verificou.
+            return "active" if probed == "valid" else "not_checked"
 
         # OmniRoute writes "active"; 9Router writes "ok". Both mean healthy.
         return "active" if self.data.get("testStatus") in ("active", "ok") else "unknown"

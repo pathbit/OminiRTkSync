@@ -50,6 +50,10 @@ class Settings:
     dashboard_password: str = "pathbit"
     cron_interval: int = 300
     cron_enabled: bool = True
+    # Validação viva das credenciais: pergunta ao provedor se a chave ainda é
+    # aceita, em vez de pintar a linha de verde só porque existe uma chave.
+    validate_credentials: bool = True
+    validation_timeout: float = 8.0
     # Quando DASHBOARD_USER/DASHBOARD_PASSWORD vêm explicitamente do ambiente, elas
     # passam a ser a fonte de verdade e o arquivo salvo pela tela é ignorado. É o
     # que permite operar 100% headless (Docker, Kubernetes, CI) sem nunca abrir o
@@ -199,5 +203,8 @@ class Settings:
             dashboard_password=d_pass,
             cron_interval=cron_int,
             cron_enabled=cron_on,
+            validate_credentials=os.environ.get("CREDENTIAL_CHECK_ENABLED", "1")
+            not in ("0", "false", "no"),
+            validation_timeout=float(os.environ.get("CREDENTIAL_CHECK_TIMEOUT", "8")),
             dashboard_auth_from_env=auth_from_env,
         )

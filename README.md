@@ -31,7 +31,7 @@ request; a push to `master` republishes the wiki automatically.
 * **Auto-Detecção de Bancos de Dados**
   * Detecção automática entre caminhos padrão do container (`/app/data/storage.sqlite`) e instalações locais (`~/.omniroute/data/storage.sqlite`).
 * **Dashboard Web Embutido**
-  * Painel de controle na porta `9191` para monitoramento do estado de cada conexão registrada e acionamento sob demanda de sincronização.
+  * Painel de controle na porta `9090` (publicada em `9092`) para monitoramento do estado de cada conexão registrada e acionamento sob demanda de sincronização.
 * **Isolamento Completo em Virtual Environment**
   * Execução segura e isolada em ambiente virtual Python tanto em containers Docker (`/opt/venv`) quanto em instalações de desenvolvimento local (`.venv`).
 
@@ -72,10 +72,10 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: router-sync
+    container_name: ominirtksync
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9191:9191"
+      - "127.0.0.1:9092:9090"
     volumes:
       - omniroute_data:/app/data
       - ${HOME}:/root/host:ro
@@ -86,13 +86,13 @@ services:
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
       - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
-      - WEB_PORT=${WEB_PORT:-9191}
+      - WEB_PORT=${WEB_PORT:-9090}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
     depends_on:
       - omniroute
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9191/healthz', timeout=3)"]
+      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -156,7 +156,7 @@ OminiRTKSync --daemon --db-path /caminho/para/storage.sqlite
 | `SYNC_INTERVAL` | `300` | Intervalo em segundos entre varreduras no modo daemon e cron |
 | `REFRESH_MARGIN` | `900` | Margem prévia em segundos para renovação de tokens |
 | `ENABLE_WEB_DASHBOARD` | `1` | Ativa o dashboard web embutido (`1` para sim, `0` para não) |
-| `WEB_PORT` | `9191` | Porta do dashboard web HTTP |
+| `WEB_PORT` | `9090` | Porta do dashboard web HTTP |
 | `WEB_HOST` | `0.0.0.0` | Interface de rede para o servidor web |
 | `DASHBOARD_USER` | `admin` | Usuário de autenticação HTTP Basic Auth |
 | `DASHBOARD_PASSWORD` | `pathbit` | Senha padrão inicial de autenticação HTTP Basic Auth |
@@ -168,7 +168,7 @@ OminiRTKSync --daemon --db-path /caminho/para/storage.sqlite
 
 Com `ENABLE_WEB_DASHBOARD=1`, acesse no navegador:
 
-👉 **http://localhost:9191**
+👉 **http://localhost:9092**
 
 Recursos do painel:
 * Monitoramento de todas as conexões cadastradas no OmniRoute.
