@@ -169,10 +169,31 @@ Recursos do painel:
 
 ## Testes Unitários
 
-Execute a suíte de testes completa dentro do virtual environment:
+Você pode executar os testes sem instalar absolutamente nada na sua máquina host (exceto o Docker), ou opcionalmente em ambiente virtual local.
+
+### Opção 1. Via Container Docker (Zero Instalação na Máquina)
+
+O único pré-requisito é ter o Docker instalado. Nada mais precisa ser instalado na máquina:
+
+```bash
+# Via script shell direto
+./run_tests.sh
+
+# Ou via Makefile
+make test-container
+
+# Ou via Docker Compose
+docker compose -f docker-compose.test.yml run --rm test
+```
+
+### Opção 2. Via Virtual Environment Local (Pré-requisitos Opcionais)
+
+Se optar por executar no host com Python 3.14+:
 
 ```bash
 source .venv/bin/activate
+make test
+# Ou diretamente:
 PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
 ```
 

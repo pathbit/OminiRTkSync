@@ -1,0 +1,12 @@
+name: ominirtksync-tests
+
+services:
+  test:
+    image: python:3.14-alpine
+    container_name: ominirtksync-test-runner
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app/src
+    command: ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
