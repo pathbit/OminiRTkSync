@@ -40,6 +40,8 @@ out and produce `BrokenPipeError` in the logs.
 | `REFRESH_MARGIN` | `900` | Seconds of remaining validity below which a token is renewed. |
 | `CRON_INTERVAL` | inherits `SYNC_INTERVAL` | Dedicated interval for the scheduler, when you want it to differ from the sync pass. |
 | `CRON_ENABLED` | `1` | `0` disables the automatic scheduler entirely. Synchronization then only happens on a manual trigger (`--once`, the **Run now** button, or `POST /api/sync`). |
+| `CREDENTIAL_CHECK_ENABLED` | `1` | Asks each provider whether the stored credential is still accepted. `0` turns the live check off and the panel falls back to reporting `Not checked`. |
+| `CREDENTIAL_CHECK_TIMEOUT` | `8` | Seconds allowed per credential probe. |
 
 > **A token is only renewed inside the margin.** With the defaults, a token with 24 minutes left
 > is *not* renewed, because 24 min > 15 min. That is correct behavior, not a failure — the

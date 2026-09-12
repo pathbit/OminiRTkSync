@@ -158,8 +158,8 @@ class TestSettingsAuthIntegration(unittest.TestCase):
             self.assertTrue(settings.verify_credentials("admin", "pathbit"))
 
             # 2. Operador troca a senha pela tela.
-            self.assertTrue(settings.update_auth_credentials("operador", "minha-senha"))
-            self.assertTrue(settings.verify_credentials("operador", "minha-senha"))
+            self.assertTrue(settings.update_auth_credentials("operador", "Minha-Senha1"))
+            self.assertTrue(settings.verify_credentials("operador", "Minha-Senha1"))
             self.assertFalse(settings.verify_credentials("admin", "pathbit"))
 
             # 3. Esqueceu a senha: entra com admin + hash de recuperação.
@@ -173,7 +173,7 @@ class TestSettingsAuthIntegration(unittest.TestCase):
     def test_recovery_hash_can_be_pinned_by_environment(self):
         settings, base = self._settings(DASHBOARD_RECOVERY_HASH="hash-fixo-do-container")
         with mock.patch.dict(os.environ, base, clear=True):
-            settings.update_auth_credentials("operador", "minha-senha")
+            settings.update_auth_credentials("operador", "Minha-Senha1")
             self.assertTrue(settings.verify_credentials("admin", "hash-fixo-do-container"))
 
     def test_env_authoritative_mode_ignores_the_saved_file(self):

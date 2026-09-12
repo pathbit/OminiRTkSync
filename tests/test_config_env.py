@@ -138,12 +138,15 @@ class TestSettingsFromEnv(unittest.TestCase):
             self.assertFalse(s.update_auth_credentials("novo", "nova-senha"))
             self.assertEqual(s.get_auth_credentials(), ("admin", "do-ambiente"))
 
-    def test_saved_file_still_wins_when_env_is_absent(self):
+    def test_saved_credentials_still_win_when_env_is_absent(self):
         """Sem variáveis definidas, a tela continua sendo a fonte de verdade."""
         with self._env():
             s = self._settings()
-            self.assertTrue(s.update_auth_credentials("da-tela", "senha-da-tela"))
-            self.assertEqual(s.get_auth_credentials(), ("da-tela", "senha-da-tela"))
+            self.assertTrue(s.update_auth_credentials("da-tela", "Senha-Tela1"))
+            # A senha agora vive como hash no SQLite, então o que se verifica é
+            # a autenticação, não a igualdade do texto.
+            self.assertTrue(s.verify_credentials("da-tela", "Senha-Tela1"))
+            self.assertFalse(s.verify_credentials("da-tela", "outra"))
 
     def test_default_password_detection(self):
         with self._env():

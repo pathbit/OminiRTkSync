@@ -146,7 +146,7 @@ class TestDashboardMarkup(unittest.TestCase):
 
     def test_refresh_controls_are_present(self):
         page = self._page()
-        self.assertIn('href="/"', page)                      # botão Atualizar
+        self.assertIn('action="/acoes/atualizar"', page)     # botão Atualizar
         self.assertIn('action="/acoes/sincronizar"', page)   # Sincronizar agora
         self.assertIn('action="/acoes/cron"', page)          # Executar ciclo
         self.assertIn('action="/acoes/testar-gateway"', page)

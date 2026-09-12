@@ -484,8 +484,10 @@ def render_dashboard(
             <div class="mb-3">
               <label class="form-label" for="novaSenha">{esc(translate("auth.new_password", lang))}</label>
               <input type="password" class="form-control" id="novaSenha" name="password"
-                     minlength="4" autocomplete="new-password" required>
-              <div class="form-text">{esc(translate("auth.min_chars", lang))}</div>
+                     minlength="6" autocomplete="new-password" required
+                     pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{{6,}}"
+                     title="{esc(translate("password.policy", lang))}">
+              <div class="form-text">{esc(translate("password.policy", lang))}</div>
             </div>
             <button class="btn btn-primary w-100" type="submit">
               <i class="bi bi-save me-1" aria-hidden="true"></i>{esc(translate("action.save_credentials", lang))}
@@ -503,6 +505,9 @@ def render_dashboard(
   <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
   <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
   <link rel="stylesheet" href="{FLAG_ICONS}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="{GOOGLE_FONTS}">
   <style>
     :root {{ --surface: #12151c; --surface-2: #171b24; --line: #242a36; }}
     body {{ background: #0b0d12; }}
@@ -540,9 +545,12 @@ def render_dashboard(
       </div>
       <div class="d-flex align-items-center gap-2">
         {render_language_switcher(lang)}
-        <a class="btn btn-outline-light btn-sm" href="/" title="{esc(translate("action.refresh_title", lang))}">
-          <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>{esc(translate("action.refresh", lang))}
-        </a>
+        <form method="post" action="/acoes/atualizar" class="m-0 d-inline">
+          <button class="btn btn-outline-light btn-sm" type="submit"
+                  title="{esc(translate("action.refresh_title", lang))}">
+            <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>{esc(translate("action.refresh", lang))}
+          </button>
+        </form>
         <button class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
           <i class="bi bi-key me-1" aria-hidden="true"></i>{esc(translate("action.access", lang))}
         </button>

@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from .config import Settings
 from .database import get_all_combos, get_all_connections
-from .i18n import DEFAULT_LANGUAGE, normalize_language
+from .i18n import DEFAULT_LANGUAGE, normalize_language, translate
 from .models import ConnectionRecord
 from .prefs import get_preference, resolve_prefs_path, set_preference
 from .render import render_dashboard
@@ -348,8 +348,12 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             new_user = str(data.get("newUser") or "admin").strip()
             new_pass = str(data.get("newPassword") or "").strip()
 
-            if not new_pass or len(new_pass) < 4:
-                body = json.dumps({"success": False, "error": "A senha deve conter ao menos 4 caracteres."}).encode("utf-8")
+            # Mesma política de força do formulário da tela.
+            problems = self.settings.check_password_strength(new_pass) if self.settings else []
+            if problems:
+                lang = self.resolve_language()
+                detail = " ".join(translate(key, lang) for key in problems)
+                body = json.dumps({"success": False, "error": detail}).encode("utf-8")
                 self.send_response(HTTPStatus.BAD_REQUEST)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -531,6 +535,15 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def invalidate_caches(self) -> None:
+        """Descarta o que foi memorizado para que a próxima renderização releia tudo.
+
+        Sem isto, o resultado da sondagem ao gateway continuaria valendo por até
+        30s e o painel exibiria um estado anterior à ação recém-disparada.
+        """
+        with _gateway_probe_lock:
+            _gateway_probe_cache.clear()
+
     def handle_dashboard_action(self, route: str, raw_body: bytes) -> None:
         """Executa uma acao do painel e devolve o usuario para a pagina renderizada."""
         if route == "/acoes/idioma":
@@ -541,6 +554,13 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Location", "/")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+
+        if route == "/acoes/atualizar":
+            # Recarga completa: zera os caches e volta para a página, que é
+            # montada de novo no servidor a partir do banco.
+            self.invalidate_caches()
+            self.redirect_to_dashboard("info", translate("action.refreshed", self.resolve_language()))
             return
 
         if route == "/acoes/sincronizar":
@@ -589,8 +609,15 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             new_user = (fields.get("user", [""])[0] or "").strip()
             new_pass = (fields.get("password", [""])[0] or "").strip()
 
-            if len(new_pass) < 4:
-                self.redirect_to_dashboard("danger", "A senha deve conter ao menos 4 caracteres.")
+            # A política de força é obrigatória: devolve todas as regras
+            # violadas de uma vez, no idioma escolhido, em vez de recusar sem
+            # dizer o motivo.
+            problems = self.settings.check_password_strength(new_pass) if self.settings else []
+            if problems:
+                lang = self.resolve_language()
+                self.redirect_to_dashboard(
+                    "danger", " ".join(translate(key, lang) for key in problems)
+                )
                 return
             if self.settings and getattr(self.settings, "dashboard_auth_from_env", False):
                 self.redirect_to_dashboard(
