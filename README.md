@@ -10,6 +10,16 @@ O **`OminiRTKSync`** (*OminiRoute Universal Token & Connection Synchronizer*) é
 
 Caso esteja utilizando o 9Router original, utilize o projeto irmão [9RTKSync](https://github.com/pathbit/9RTKSync) configurado para a arquitetura do [9Router](https://github.com/decolua/9router).
 
+
+## Documentation
+
+The full documentation lives in the [project wiki](../../wiki): installation, the complete
+environment-variable contract, the dashboard, authentication and break-glass recovery,
+persistent logging, architecture, troubleshooting, and the upstream gateway fixes.
+
+Wiki pages are generated from [`docs/wiki/`](docs/wiki) — edit them there and open a pull
+request; a push to `master` republishes the wiki automatically.
+
 ---
 
 ## Recursos Principais
