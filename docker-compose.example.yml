@@ -6,11 +6,11 @@ services:
     container_name: omniroute
     restart: unless-stopped
     ports:
-      # Porta interna 20128 (padrao do OmniRoute); publicada em 20129 no host.
-      # O 9Router usa a 20128, e as duas stacks de exemplo colidiam quando
-      # alguem subia as duas na mesma maquina -- que e o caso de quem compara
-      # os dois gateways.
-      - "127.0.0.1:20129:20128"
+      # Porta interna 20128 (padrao do OmniRoute); publicada em 8082 no host.
+      # Cada gateway tem a sua porta no host -- 8081 9Router, 8082 OmniRoute,
+      # 8083 LiteLLM -- para que os tres rodem juntos, inclusive ao lado da
+      # stack do artigo, que fica com a 20128.
+      - "127.0.0.1:8082:20128"
     environment:
       - DATA_DIR=/app/data
       - PORT=20128
