@@ -1,4 +1,4 @@
-# OminiRTKSync · OmniRoute Token & Connection Sync
+# OminiRTKSync · OminiRoute Universal Token & Connection Synchronizer
 
 [![CI](https://github.com/pathbit/OminiRTkSync/actions/workflows/ci.yml/badge.svg)](https://github.com/pathbit/OminiRTkSync/actions/workflows/ci.yml)
 [![Release and Docker Package](https://github.com/pathbit/OminiRTkSync/actions/workflows/release.yml/badge.svg)](https://github.com/pathbit/OminiRTkSync/actions/workflows/release.yml)
@@ -6,7 +6,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.14.7-blue.svg)](https://www.python.org/ftp/python/3.14.7/python-3.14.7-macos11.pkg)
 [![Docker Package](https://img.shields.io/badge/docker-ghcr.io%2Fpathbit%2Fominirtksync-blue)](https://github.com/pathbit/OminiRTkSync/pkgs/container/ominirtksync)
 
-O **`OminiRTKSync`** (*OmniRoute Token & Connection Synchronizer*) é o sincronizador e guardião de conexões dedicado ao gateway [OmniRoute](https://github.com/diegosouzapw/OmniRoute). Ele gerencia a persistência relacional de credenciais, auto-renovação de tokens OAuth e prevenção de interrupções de rota em inteligência artificial.
+O **`OminiRTKSync`** (*OminiRoute Universal Token & Connection Synchronizer*) é o sincronizador e guardião de conexões dedicado ao gateway [OmniRoute](https://github.com/diegosouzapw/OmniRoute). Ele gerencia a persistência relacional de credenciais, auto-renovação de tokens OAuth e prevenção de interrupções de rota em inteligência artificial.
 
 Caso esteja utilizando o 9Router original, utilize o projeto irmão [9RTKSync](https://github.com/pathbit/9RTKSync) configurado para a arquitetura do [9Router](https://github.com/decolua/9router).
 

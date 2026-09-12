@@ -6,7 +6,7 @@
 FROM python:3.14-alpine
 
 LABEL org.opencontainers.image.title="OminiRTKSync"
-LABEL org.opencontainers.image.description="OmniRoute Universal Token & Connection Synchronizer"
+LABEL org.opencontainers.image.description="OminiRoute Universal Token & Connection Synchronizer"
 LABEL org.opencontainers.image.authors="Eliel Sousa <eliel@pathbit.co>"
 LABEL org.opencontainers.image.source="https://github.com/pathbit/OminiRTkSync"
 

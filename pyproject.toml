@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "OminiRTKSync"
 version = "1.0.0"
-description = "OmniRoute Universal Token & Connection Synchronizer"
+description = "OminiRoute Universal Token & Connection Synchronizer"
 readme = "README.md"
 authors = [
     { name = "Eliel Sousa", email = "eliel@pathbit.co" }

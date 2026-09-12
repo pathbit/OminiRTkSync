@@ -78,7 +78,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>OminiRTKSync · OmniRoute Token & Connection Sync</title>
+  <title>OminiRTKSync · OminiRoute Universal Token & Connection Synchronizer</title>
   <style>
     body { background: #0b0f19; color: #c9d1d9; font-family: -apple-system, sans-serif; padding: 24px; }
     .container { max-width: 1000px; margin: 0 auto; }
@@ -94,7 +94,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 <body>
   <div class="container">
     <h1>⚡ OminiRTKSync</h1>
-    <p>OmniRoute Universal Token & Connection Synchronizer (<a href="https://github.com/diegosouzapw/OmniRoute" style="color:#58a6ff;">OmniRoute</a>)</p>
+    <p>OminiRoute Universal Token & Connection Synchronizer (<a href="https://github.com/diegosouzapw/OmniRoute" style="color:#58a6ff;">OmniRoute</a>)</p>
     <div class="card">
       <button class="btn" onclick="fetch('/api/sync', {method:'POST'}).then(()=>location.reload())">Sincronizar Agora</button>
     </div>
