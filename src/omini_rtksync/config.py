@@ -5,6 +5,27 @@ from dataclasses import dataclass
 from typing import List
 
 
+def load_dotenv(dotenv_path: str = ".env") -> None:
+    """Carrega variaveis de um arquivo .env para os.environ se nao estiverem definidas."""
+    if not os.path.isfile(dotenv_path):
+        return
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+                if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                    v = v[1:-1]
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
+
+
 @dataclass
 class Settings:
     """Configurações de execução do OminiRTKSync para OmniRoute."""
@@ -62,7 +83,8 @@ class Settings:
             return False
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls, env_file: str = ".env") -> "Settings":
+        load_dotenv(env_file)
         host_home = os.environ.get("HOST_HOME", "")
         if not host_home:
             if os.path.exists("/root/host") and os.path.isdir("/root/host"):

@@ -1210,5 +1210,11 @@ temp/
 **/.tmp/
 **/.temp/
 
+# Environment variables and sensitive local configs
+.env
+.env.*
+!.env.example
+.dashboard_auth.json
+
 ### NOT IGNORE
 !.vscode/

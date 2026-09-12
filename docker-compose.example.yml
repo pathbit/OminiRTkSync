@@ -22,7 +22,7 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: OminiRTKSync
+    container_name: router-sync
     restart: unless-stopped
     ports:
       - "127.0.0.1:9191:9191"
@@ -32,11 +32,13 @@ services:
     environment:
       - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
-      - OMNIROUTE_URL=http://omniroute:20128
-      - SYNC_INTERVAL=300
-      - REFRESH_MARGIN=900
-      - ENABLE_WEB_DASHBOARD=1
-      - WEB_PORT=9191
+      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://omniroute:20128}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
+      - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
+      - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
+      - WEB_PORT=${WEB_PORT:-9191}
+      - DASHBOARD_USER=${DASHBOARD_USER:-admin}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
     depends_on:
       - omniroute
 

@@ -62,7 +62,7 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: OminiRTKSync
+    container_name: router-sync
     restart: unless-stopped
     ports:
       - "127.0.0.1:9191:9191"
@@ -72,11 +72,13 @@ services:
     environment:
       - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
-      - OMNIROUTE_URL=http://omniroute:20128
-      - SYNC_INTERVAL=300
-      - REFRESH_MARGIN=900
-      - ENABLE_WEB_DASHBOARD=1
-      - WEB_PORT=9191
+      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://omniroute:20128}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
+      - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
+      - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
+      - WEB_PORT=${WEB_PORT:-9191}
+      - DASHBOARD_USER=${DASHBOARD_USER:-admin}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
     depends_on:
       - omniroute
     healthcheck:
@@ -104,7 +106,7 @@ cd OminiRTkSync
 ```
 
 ### 2. Criar e Ativar o Virtual Environment
-
+ 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -112,7 +114,15 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-### 3. Comandos Disponíveis
+### 3. Configurar Variáveis de Ambiente (.env)
+
+Copie o modelo oficial para criar seu `.env` local (o arquivo `.env` é estritamente ignorado no git):
+
+```bash
+cp .env.example .env
+```
+
+### 4. Comandos Disponíveis
 
 ```bash
 # Exibir status das conexões do OmniRoute
@@ -133,11 +143,13 @@ OminiRTKSync --daemon --db-path /caminho/para/storage.sqlite
 | :--- | :--- | :--- |
 | `DB_PATH` | `/app/data/storage.sqlite` | Caminho do arquivo SQLite do OmniRoute |
 | `OMNIROUTE_URL` | `http://127.0.0.1:20128` | URL base do gateway OmniRoute para testes de conectividade |
-| `SYNC_INTERVAL` | `300` | Intervalo em segundos entre varreduras no modo daemon |
+| `SYNC_INTERVAL` | `300` | Intervalo em segundos entre varreduras no modo daemon e cron |
 | `REFRESH_MARGIN` | `900` | Margem prévia em segundos para renovação de tokens |
 | `ENABLE_WEB_DASHBOARD` | `1` | Ativa o dashboard web embutido (`1` para sim, `0` para não) |
 | `WEB_PORT` | `9191` | Porta do dashboard web HTTP |
 | `WEB_HOST` | `0.0.0.0` | Interface de rede para o servidor web |
+| `DASHBOARD_USER` | `admin` | Usuário de autenticação HTTP Basic Auth |
+| `DASHBOARD_PASSWORD` | `pathbit` | Senha padrão inicial de autenticação HTTP Basic Auth |
 | `ANTIGRAVITY_TOKEN_PATH` | auto | Caminho customizado para arquivo de token do Antigravity |
 
 ---
