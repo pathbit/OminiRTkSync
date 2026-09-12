@@ -37,7 +37,88 @@ request; a push to `master` republishes the wiki automatically.
 
 ---
 
+---
+
+## 🔑 Como entrar no painel
+
+| | |
+| :--- | :--- |
+| **Endereço** | `http://localhost:9092` |
+| **Usuário** | `admin` — ou o que você definir em `DASHBOARD_USER` |
+| **Senha** | o valor de `DASHBOARD_PASSWORD` no seu `.env` |
+
+**Não existe senha de fábrica**, e isso é deliberado: uma senha fixa publicada
+na imagem vira credencial pública no instante em que a imagem é publicada. Você
+escolhe a sua uma vez, num lugar só:
+
+```bash
+cp .env.example .env
+# edite o .env:
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=<a senha que voce escolher>
+```
+
+Suba a stack em seguida. Esse usuário e essa senha são o que o painel aceita.
+
+### Subiu sem definir senha e agora não entra?
+
+No primeiro boot com `DASHBOARD_PASSWORD` vazio, o container gera uma
+**credencial de recuperação** e a grava dentro do diretório de dados. Leia com:
+
+```bash
+docker exec ominirtksync cat /app/data/.dashboard_recovery
+```
+
+Entre como `admin` com esse valor e defina a sua senha pela tela. A credencial
+de recuperação continua valendo depois disso — ela é o arrombamento de vidro, e
+uma que parasse de funcionar assim que você define uma senha seria inútil
+justamente quando é necessária.
+
+> **English:** the panel asks for user and password. The user is `admin` (or
+> whatever `DASHBOARD_USER` says) and the password is the one **you** set in
+> `DASHBOARD_PASSWORD` — there is no factory password, because a fixed value
+> shipped in an image is a public credential. If you brought the stack up
+> without setting one, use the command above to read the recovery credential.
+
 ## Como Executar via Docker
+
+### Configuração: `.env` a partir do exemplo
+
+A configuração inteira vem de variáveis de ambiente, lidas de um `.env` ao lado
+do `docker-compose.yml` — o Compose o encontra sozinho, sem nenhuma flag.
+
+```bash
+make setup      # cria o .env a partir do .env.example, sem sobrescrever um existente
+```
+
+O alvo lista, ao final, exatamente quais variáveis ficaram em branco e precisam
+ser preenchidas. Preencha e suba a stack.
+
+O `.env` **nunca** é versionado, e o `.env.example` não carrega nenhum valor de
+segredo — um valor publicado num arquivo de exemplo é, por definição, uma
+credencial pública. Um teste garante que toda variável exigida por um compose
+existe no exemplo, para que `cp .env.example .env` nunca produza um `.env`
+incompleto.
+
+### Portas, e por que cada uma é diferente
+
+Os três sincronizadores escutam na **mesma porta dentro do container** (`9090`)
+e publicam em portas diferentes no host, para que os três possam rodar lado a
+lado. O mesmo vale para os gateways: cada um tem a sua.
+
+| Serviço | Porta interna | Publicada no host |
+| :--- | :--- | :--- |
+| 9Router | `20128` | `20128` |
+| OmniRoute | `20128` | `20129` |
+| LiteLLM | `4000` | `20130` |
+| 9RTKSync (painel) | `9090` | `9091` |
+| OminiRTkSync (painel) | `9090` | `9092` |
+| LiteLlmRTKSync (painel) | `9090` | `9093` |
+
+Tudo preso a `127.0.0.1`: o gateway carrega credenciais reais e não deve ficar
+acessível na rede local. Para mudar qualquer uma, altere o lado esquerdo do
+mapeamento no compose — o lado direito é a porta interna, que o processo escuta.
+
 
 O pacote Docker oficial do OminiRTKSync é distribuído via GitHub Container Registry (GHCR):
 
