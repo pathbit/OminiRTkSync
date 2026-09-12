@@ -48,7 +48,7 @@ appear from several addresses over time.
 
 Through OmniRoute's own screens and API — the synchronizer never writes here:
 
-1. Register each egress under **Settings → Proxies** (`/api/settings/proxies`).
+1. Register each egress under OmniRoute's own **Settings → Proxies** screen (`/api/settings/proxies` — the gateway's API, not this panel's).
 2. Bind one to the connection, choosing the **account** scope, so the assignment
    lands with `scope='account'` and `scope_id` equal to the connection id.
 3. Turn on `proxy_enabled` for that connection.
