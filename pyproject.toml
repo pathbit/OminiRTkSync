@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OminiRTKSync"
+version = "1.0.0"
+description = "OmniRoute Universal Token & Connection Synchronizer"
+readme = "README.md"
+authors = [
+    { name = "Eliel Sousa", email = "eliel@pathbit.co" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["omniroute", "oauth", "token-sync", "llm", "antigravity", "claude-code"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/pathbit/OminiRTkSync"
+Repository = "https://github.com/pathbit/OminiRTkSync"
+Issues = "https://github.com/pathbit/OminiRTkSync/issues"
+
+[project.scripts]
+ominirtksync = "omini_rtksync.cli:main"
+OminiRTKSync = "omini_rtksync.cli:main"
+omini-rtksync = "omini_rtksync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

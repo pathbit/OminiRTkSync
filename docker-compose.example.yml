@@ -1,0 +1,43 @@
+name: omniroute-stack
+
+services:
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    container_name: omniroute
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:20128:20128"
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_BASE_URL=http://localhost:20128
+      - NODE_ENV=production
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-PathbitDevs2026!}
+      - JWT_SECRET=${JWT_SECRET:-omniroute-jwt-secret-key-pathbit}
+      - REQUIRE_API_KEY=false
+      - REQUIRE_LOGIN=false
+    volumes:
+      - omniroute_data:/app/data
+
+  ominirtksync:
+    image: ghcr.io/pathbit/ominirtksync:latest
+    container_name: OminiRTKSync
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9191:9191"
+    volumes:
+      - omniroute_data:/app/data
+      - ${HOME}/.gemini:/root/.gemini:ro
+    environment:
+      - DB_PATH=/app/data/storage.sqlite
+      - OMNIROUTE_URL=http://omniroute:20128
+      - SYNC_INTERVAL=300
+      - REFRESH_MARGIN=900
+      - ENABLE_WEB_DASHBOARD=1
+      - WEB_PORT=9191
+    depends_on:
+      - omniroute
+
+volumes:
+  omniroute_data:
