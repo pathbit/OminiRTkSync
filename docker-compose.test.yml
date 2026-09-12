@@ -1,0 +1,79 @@
+# Stack de teste isolada: gateway real + este sincronizador.
+#
+# Nome de projeto, nomes de container e portas proprios, para conviver com
+# qualquer outra stack na mesma maquina. Tudo preso em 127.0.0.1 -- o painel le
+# credencial, e nada disso vai para a rede.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Nao depende de nenhuma stack de artigo: e uma stack do proprio repositorio.
+
+name: ominirtksync-test
+
+services:
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    container_name: ominirtksync-test-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19129:20128"
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - HOSTNAME=0.0.0.0
+      - NODE_ENV=production
+      # Obrigatorias e sem valor padrao: um default publicado em arquivo de
+      # exemplo vira a credencial real de quem so copiou e colou.
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?defina INITIAL_PASSWORD no .env}
+      - JWT_SECRET=${JWT_SECRET:?defina JWT_SECRET no .env (openssl rand -hex 32)}
+      - REQUIRE_API_KEY=false
+      # Aceitavel apenas porque a porta acima esta presa em 127.0.0.1.
+      - REQUIRE_LOGIN=false
+    volumes:
+      - gateway_data:/app/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:20128/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      # O primeiro boot roda migracoes e cria o banco.
+      start_period: 45s
+
+  ominirtksync:
+    build: .
+    image: ghcr.io/pathbit/ominirtksync:local
+    container_name: ominirtksync-test-sync
+    restart: unless-stopped
+    ports:
+      # Porta interna 9090 nos tres sincronizadores; publicada em 19092 aqui.
+      - "127.0.0.1:19092:9090"
+    environment:
+      - DATA_DIR=/app/data
+      - DB_PATH=/app/data/storage.sqlite
+      - OMNIROUTE_URL=http://omniroute:20128
+      - WEB_PORT=9090
+      - SYNC_INTERVAL=60
+      - REFRESH_MARGIN=900
+      - CRON_ENABLED=1
+      - LOG_DIR=/app/data/logs
+      - LOG_LEVEL=INFO
+      # Desligada na stack de teste: o CI nao deve sair para a internet.
+      - CREDENTIAL_CHECK_ENABLED=0
+    volumes:
+      - gateway_data:/app/data
+    depends_on:
+      omniroute:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  gateway_data:
