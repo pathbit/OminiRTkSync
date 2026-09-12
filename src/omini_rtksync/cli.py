@@ -10,7 +10,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from .config import Settings
-from .credential_check import STATE_INVALID, STATE_VALID, check_oauth_token
+from .credential_check import (
+    STATE_INVALID,
+    STATE_UNSUPPORTED,
+    STATE_VALID,
+    CheckResult,
+    check_oauth_token,
+    looks_encrypted,
+)
 from .logs import get_logger, setup_logging
 from .cron import CronScheduler
 from .database import (
@@ -156,9 +163,24 @@ class OmniSyncEngine:
                 # gravada ainda está no futuro continuava sendo exibido como
                 # ativo — que é exatamente o caso que o painel precisa mostrar.
                 if self.settings.validate_credentials and c.get("accessToken"):
-                    veredito = check_oauth_token(
-                        str(c.get("accessToken")), timeout=self.settings.validation_timeout
-                    )
+                    # Credencial cifrada em repouso não é credencial inválida:
+                    # o que temos em mãos é um texto que não sabemos abrir.
+                    # Sondar com ele só produz uma recusa do provedor, e gravar
+                    # essa recusa marcava de vermelho, no painel do próprio
+                    # gateway, uma conta que ninguém chegou a testar.
+                    if looks_encrypted(c.get("accessToken")):
+                        nota = "Token cifrado em repouso pelo gateway: não verificável daqui"
+                        log_msg("INFO", f"[{provider} · {name}] {nota}")
+                        detalhe["actions"].append(nota)
+                        veredito = CheckResult(
+                            state=STATE_UNSUPPORTED,
+                            detail="Access token is encrypted at rest by the gateway",
+                        )
+                    else:
+                        veredito = check_oauth_token(
+                            str(c.get("accessToken")), timeout=self.settings.validation_timeout
+                        )
+
                     if veredito.state == STATE_INVALID:
                         nota = f"Token de acesso RECUSADO pelo Google ({veredito.detail})"
                         log_msg("FALHA", f"[{provider} · {name}] {nota}")

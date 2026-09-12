@@ -255,6 +255,31 @@ def check_oauth_token(
     return _execute(request, timeout, opener, spec_invalid=(400,))
 
 
+
+# Prefixo com que o gateway marca uma credencial cifrada em repouso
+# (AES-256-GCM, formato enc:v1:<iv>:<cifra>:<tag>). Ler esse valor cru e
+# manda-lo ao provedor so produz uma recusa que nao diz nada sobre a
+# credencial -- diz sobre a nossa incapacidade de le-la.
+ENCRYPTED_PREFIX = "enc:"
+
+
+def looks_encrypted(value: Any) -> bool:
+    """True quando o valor guardado e um texto cifrado, nao a credencial."""
+    return isinstance(value, str) and value.startswith(ENCRYPTED_PREFIX)
+
+
+def _unreadable(campo: str) -> "CheckResult":
+    """Resultado honesto para o que nao conseguimos sequer ler."""
+    return CheckResult(
+        state=STATE_UNSUPPORTED,
+        detail=(
+            f"{campo} is encrypted at rest by the gateway; "
+            "not verifiable from here"
+        ),
+        checked_at=_now_iso(),
+    )
+
+
 def check_connection(
     conn: Any,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
@@ -270,9 +295,13 @@ def check_connection(
         )
 
     if getattr(conn, "is_oauth", False) and getattr(conn, "access_token", None):
+        if looks_encrypted(conn.access_token):
+            return _unreadable("Access token")
         return check_oauth_token(conn.access_token, timeout=timeout, opener=opener)
 
     if getattr(conn, "has_api_key", False):
+        if looks_encrypted(getattr(conn, "api_key", None)):
+            return _unreadable("API key")
         return check_api_key(
             conn.provider,
             conn.api_key or "",
