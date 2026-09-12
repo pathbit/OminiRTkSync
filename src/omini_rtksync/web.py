@@ -3,16 +3,27 @@
 import base64
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional
 
 from .config import Settings
 from .database import get_all_combos, get_all_connections
+
+
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        ex = sys.exc_info()[1]
+        if isinstance(ex, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class OminiDashboardHandler(BaseHTTPRequestHandler):
@@ -21,6 +32,8 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     omniroute_url: str = ""
     sync_callback: Optional[Callable[[], Dict[str, Any]]] = None
     cron_scheduler: Optional[Any] = None
+    _last_gw_check: float = 0.0
+    _last_gw_ok: bool = True
 
     def log_message(self, format, *args):
         pass
@@ -94,27 +107,35 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         db_ok = bool(self.db_path and os.path.exists(self.db_path))
         router_ok = True
         if self.omniroute_url:
-            try:
-                req = urllib.request.Request(
-                    self.omniroute_url,
-                    headers={"User-Agent": "OminiRTKSync-Healthcheck/1.0"},
-                )
-                with urllib.request.urlopen(req, timeout=3.0) as resp:
-                    router_ok = resp.status < 500
-            except urllib.error.HTTPError as e:
-                router_ok = e.code < 500
-            except Exception:
-                router_ok = False
+            now = time.time()
+            if now - OminiDashboardHandler._last_gw_check < 15.0:
+                router_ok = OminiDashboardHandler._last_gw_ok
+            else:
+                try:
+                    req = urllib.request.Request(
+                        self.omniroute_url,
+                        headers={"User-Agent": "OminiRTKSync-Healthcheck/1.0"},
+                    )
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        router_ok = resp.status < 500
+                except urllib.error.HTTPError as e:
+                    router_ok = e.code < 500
+                except Exception:
+                    router_ok = False
+                OminiDashboardHandler._last_gw_check = now
+                OminiDashboardHandler._last_gw_ok = router_ok
 
         if db_ok and router_ok:
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(b"OK")
         else:
             reason = "DATABASE_NOT_READY" if not db_ok else "OMNIROUTE_SERVICE_UNREACHABLE"
             self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
             self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(reason.encode("utf-8"))
 
@@ -872,7 +893,7 @@ def start_omini_web(
     OminiDashboardHandler.settings = settings
     OminiDashboardHandler.cron_scheduler = cron_scheduler
 
-    server = HTTPServer((host, port), OminiDashboardHandler)
+    server = QuietThreadingHTTPServer((host, port), OminiDashboardHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server

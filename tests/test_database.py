@@ -77,7 +77,8 @@ class TestOminiDatabase(unittest.TestCase):
         conns = get_all_connections(self.db_path)
         ag = next(c for c in conns if c["id"] == "conn-ag-1")
         self.assertEqual(ag["accessToken"], "new-tok-789")
-        self.assertEqual(ag["expiresAt"], "1789999999000")
+        self.assertTrue("2026-09" in ag["expiresAt"])
+        self.assertEqual(ag["testStatus"], "active")
 
 
 if __name__ == "__main__":

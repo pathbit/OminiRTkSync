@@ -46,7 +46,7 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
             refresh_token = item.get("refresh_token") or item.get("refreshToken")
             api_key = item.get("api_key") or item.get("apiKey")
             expires_at = item.get("expires_at") or item.get("expiresAt")
-            test_status = item.get("test_status") or item.get("testStatus") or "ok"
+            test_status = item.get("test_status") or item.get("testStatus") or "active"
 
             # If JSON 'data' field is present (9Router style schema), merge fields
             if "data" in keys and isinstance(item["data"], str):
@@ -92,13 +92,17 @@ def update_connection(
 
         if "access_token" in cols:
             # OmniRoute relational schema (provider_connections)
+            try:
+                exp_iso = datetime.fromtimestamp(expires_at_ms / 1000.0, timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                exp_iso = str(expires_at_ms)
             cursor.execute(
                 f"""
                 UPDATE {tbl}
-                SET access_token = ?, refresh_token = ?, expires_at = ?, test_status = 'ok', updated_at = ?
+                SET access_token = ?, refresh_token = ?, expires_at = ?, test_status = 'active', updated_at = ?
                 WHERE id = ?
                 """,
-                (access_token, refresh_token, str(expires_at_ms), now_iso, connection_id),
+                (access_token, refresh_token, exp_iso, now_iso, connection_id),
             )
         elif "data" in cols:
             # Compatible JSON format
@@ -114,7 +118,7 @@ def update_connection(
             if refresh_token:
                 d["refreshToken"] = refresh_token
             d["expiresAt"] = expires_at_ms
-            d["testStatus"] = "ok"
+            d["testStatus"] = "active"
             cursor.execute(
                 f"UPDATE {tbl} SET data = ?, updatedAt = ? WHERE id = ?",
                 (json.dumps(d), now_iso, connection_id),
