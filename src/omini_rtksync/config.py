@@ -217,13 +217,18 @@ class Settings:
             if not db_path:
                 db_path = candidate_dbs[0]
 
-        # Só considera "vindo do ambiente" quando a variável foi realmente definida,
-        # para não transformar o padrão de fábrica em configuração autoritativa.
+        # Quem manda no modo "credencial gerida pelo ambiente" e a SENHA, nunca o
+        # nome de usuario: nome sozinho nao e credencial. Com a regra anterior,
+        # o docker-compose de exemplo (DASHBOARD_USER=admin e
+        # DASHBOARD_PASSWORD vazia) marcava a autenticacao como autoritativa do
+        # ambiente, e o painel recusava para sempre definir a senha pela tela.
+        # A instalacao ficava presa na credencial de recuperacao e o aviso de
+        # seguranca nunca sumia, porque nunca havia senha gravada no SQLite.
         env_user = os.environ.get("DASHBOARD_USER")
         env_pass = os.environ.get("DASHBOARD_PASSWORD")
         d_user = env_user or "admin"
         d_pass = env_pass or ""
-        auth_from_env = bool(env_user or env_pass)
+        auth_from_env = bool(d_pass)
 
         sync_int = int(os.environ.get("SYNC_INTERVAL", "300"))
         cron_int = int(os.environ.get("CRON_INTERVAL", str(sync_int)))

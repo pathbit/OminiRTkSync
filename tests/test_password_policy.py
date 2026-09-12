@@ -140,5 +140,53 @@ class TestNoFactoryPassword(unittest.TestCase):
         self.assertGreaterEqual(len(recovery), 32)
 
 
+class TestEnvManagedAuthNeedsAPassword(unittest.TestCase):
+    """So a senha decide se a credencial e gerida pelo ambiente.
+
+    O docker-compose de exemplo define DASHBOARD_USER=admin e deixa
+    DASHBOARD_PASSWORD vazia. Enquanto o nome de usuario tambem contava, isso
+    marcava a autenticacao como autoritativa do ambiente: o painel recusava
+    definir senha pela tela ("Credenciais definidas por variavel de ambiente"),
+    a instalacao ficava presa na credencial de recuperacao e o aviso de
+    seguranca nunca sumia, porque nunca havia senha gravada no SQLite.
+    """
+
+    def setUp(self):
+        self.original = {
+            chave: os.environ.get(chave)
+            for chave in ("DASHBOARD_USER", "DASHBOARD_PASSWORD")
+        }
+        self.addCleanup(self.restaurar)
+        for chave in self.original:
+            os.environ.pop(chave, None)
+
+    def restaurar(self):
+        for chave, valor in self.original.items():
+            if valor is None:
+                os.environ.pop(chave, None)
+            else:
+                os.environ[chave] = valor
+
+    def test_only_the_user_set_is_not_env_managed(self):
+        os.environ["DASHBOARD_USER"] = "admin"
+        self.assertFalse(Settings.from_env().dashboard_auth_from_env)
+
+    def test_the_shape_shipped_in_the_compose_example_is_not_env_managed(self):
+        # Exatamente o que o docker-compose.example.yml produz.
+        os.environ["DASHBOARD_USER"] = "admin"
+        os.environ["DASHBOARD_PASSWORD"] = ""
+        settings = Settings.from_env()
+        self.assertFalse(settings.dashboard_auth_from_env)
+        # E o nome de usuario continua sendo respeitado.
+        self.assertEqual(settings.dashboard_user, "admin")
+
+    def test_a_real_password_is_env_managed(self):
+        os.environ["DASHBOARD_PASSWORD"] = "Sample1!"
+        self.assertTrue(Settings.from_env().dashboard_auth_from_env)
+
+    def test_nothing_set_is_not_env_managed(self):
+        self.assertFalse(Settings.from_env().dashboard_auth_from_env)
+
+
 if __name__ == "__main__":
     unittest.main()

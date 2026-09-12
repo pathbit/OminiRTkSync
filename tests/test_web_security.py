@@ -33,7 +33,7 @@ class TestWebSecurity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp_dir = tempfile.TemporaryDirectory()
-        cls.db_path = os.path.join(cls.tmp_dir.name, "data.sqlite")
+        cls.db_path = os.path.join(cls.tmp_dir.name, "storage.sqlite")
         with sqlite3.connect(cls.db_path) as conn:
             conn.execute(
                 "CREATE TABLE provider_connections ("
@@ -201,6 +201,110 @@ class TestWebSecurity(unittest.TestCase):
             page = resp.read().decode("utf-8")
         # O banner explica que falta senha sem exibir qual e a de fabrica.
         self.assertNotIn("admin / pathbit", page)
+
+
+class TestSecurityHeadersOnEveryResponse(unittest.TestCase):
+    """Sobe o proprio servidor: o unittest ordena as classes pelo nome e esta
+    roda antes de TestWebSecurity, que e quem monta o outro fixture."""
+
+    PORTA = PORT + 1
+    ORIGEM = f"http://127.0.0.1:{PORT + 1}"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp_dir = tempfile.TemporaryDirectory()
+        cls.db_path = os.path.join(cls.tmp_dir.name, "data.sqlite")
+        with sqlite3.connect(cls.db_path) as conn:
+            conn.execute(
+                "CREATE TABLE provider_connections ("
+                "id TEXT PRIMARY KEY, provider TEXT, name TEXT, access_token TEXT, "
+                "refresh_token TEXT, api_key TEXT, expires_at TEXT, test_status TEXT, "
+                "created_at TEXT, updated_at TEXT)"
+            )
+            conn.execute("CREATE TABLE combos (id TEXT PRIMARY KEY, name TEXT, models TEXT)")
+        cls.settings = Settings(
+            db_path=cls.db_path,
+            web_host="127.0.0.1",
+            web_port=cls.PORTA,
+            dashboard_user="admin",
+            dashboard_password="senha-de-teste",
+            validate_credentials=False,
+        )
+        cls.server = web_server.start_omini_web(
+            "127.0.0.1", cls.PORTA, cls.db_path, omniroute_url="", settings=cls.settings
+        )
+        time.sleep(0.3)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.tmp_dir.cleanup()
+
+    """Os cabecalhos de seguranca nao podem valer so para a pagina principal.
+
+    Antes desta cobertura eles eram emitidos em um unico ponto, o da pagina do
+    painel. O corpo do 401 e a pagina de credenciais atualizadas tambem sao
+    HTML que o navegador renderiza, e saiam sem nenhum deles; nao havia
+    Content-Security-Policy em resposta nenhuma.
+    """
+
+    OBRIGATORIOS = (
+        "Referrer-Policy",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Content-Security-Policy",
+    )
+
+    def headers_de(self, path, autenticado=True):
+        req = urllib.request.Request(f"{self.ORIGEM}{path}")
+        if autenticado:
+            raw = base64.b64encode(b"admin:senha-de-teste").decode()
+            req.add_header("Authorization", f"Basic {raw}")
+        opener = urllib.request.build_opener(NoRedirect)
+        try:
+            with opener.open(req, timeout=5) as resp:
+                return resp.headers
+        except urllib.error.HTTPError as e:
+            return e.headers
+
+    def test_the_dashboard_carries_every_header(self):
+        headers = self.headers_de("/")
+        for nome in self.OBRIGATORIOS:
+            self.assertIsNotNone(headers.get(nome), f"{nome} ausente em /")
+
+    def test_the_401_body_carries_every_header(self):
+        """E o corpo que o navegador exibe quando se aperta ESC: tem de estar protegido."""
+        headers = self.headers_de("/", autenticado=False)
+        for nome in self.OBRIGATORIOS:
+            self.assertIsNotNone(headers.get(nome), f"{nome} ausente no 401")
+
+    def test_the_credentials_updated_page_carries_every_header(self):
+        headers = self.headers_de("/credenciais-atualizadas", autenticado=False)
+        for nome in self.OBRIGATORIOS:
+            self.assertIsNotNone(headers.get(nome), f"{nome} ausente no aviso")
+
+    def test_the_json_endpoint_carries_every_header(self):
+        headers = self.headers_de("/api/status")
+        for nome in self.OBRIGATORIOS:
+            self.assertIsNotNone(headers.get(nome), f"{nome} ausente em /api/status")
+
+    def test_the_policy_allows_exactly_the_origins_the_page_uses(self):
+        csp = self.headers_de("/").get("Content-Security-Policy")
+        # Bootstrap e os icones vem do jsDelivr; as fontes, do Google.
+        self.assertIn("https://cdn.jsdelivr.net", csp)
+        self.assertIn("https://fonts.gstatic.com", csp)
+        # E nada alem disso: sem destino para exfiltrar e sem enquadramento.
+        self.assertIn("connect-src 'self'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertIn("form-action 'self'", csp)
+        self.assertIn("base-uri 'none'", csp)
+
+    def test_no_header_is_emitted_twice(self):
+        """O helper nao pode duplicar um cabecalho que a rota ja tenha enviado."""
+        headers = self.headers_de("/")
+        for nome in self.OBRIGATORIOS:
+            self.assertEqual(len(headers.get_all(nome) or []), 1, f"{nome} duplicado")
 
 
 if __name__ == "__main__":

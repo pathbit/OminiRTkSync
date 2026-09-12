@@ -94,6 +94,50 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.write_body(payload)
         return False
 
+    # Politica de seguranca aplicada a TODAS as respostas, nao so a pagina
+    # principal: o 401, o aviso de credenciais trocadas e os redirects tambem
+    # sao HTML que o navegador renderiza.
+    SECURITY_HEADERS = (
+        ("Referrer-Policy", "no-referrer"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        (
+            "Content-Security-Policy",
+            # Restrita ao que a pagina realmente carrega: Bootstrap e os icones
+            # vem do jsDelivr, as fontes do Google. connect-src 'self' porque o
+            # painel e inteiramente renderizado no servidor, entao um HTML
+            # injetado nao tem para onde exfiltrar.
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://fonts.googleapis.com; "
+            "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'none'"
+        ),
+    )
+
+    def end_headers(self):
+        """Injeta os cabecalhos de seguranca antes de fechar o bloco."""
+        enviados = {k.lower() for k, _ in self._headers_buffer_names()}
+        for nome, valor in self.SECURITY_HEADERS:
+            if nome.lower() not in enviados:
+                self.send_header(nome, valor)
+        super().end_headers()
+
+    def _headers_buffer_names(self):
+        """Nomes ja enfileirados nesta resposta, para nao duplicar cabecalho."""
+        for linha in getattr(self, "_headers_buffer", []) or []:
+            try:
+                texto = linha.decode("latin-1", "ignore")
+            except Exception:
+                continue
+            if ":" in texto:
+                yield texto.split(":", 1)[0].strip(), texto
+
     def do_GET(self):
         if self.path == "/healthz":
             self.serve_healthz()
@@ -550,9 +594,6 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         # A pagina carrega dados vivos: nunca pode vir do cache do navegador.
         self.send_header("Cache-Control", "no-store, must-revalidate")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.write_body(content)
