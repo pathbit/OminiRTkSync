@@ -39,7 +39,7 @@ docker-build:
 	docker build -t ominirtksync:latest -t ghcr.io/pathbit/ominirtksync:latest .
 
 docker-run:
-	docker run --rm -it --name ominirtksync -p 9092:9090 ominirtksync:latest
+	docker run --rm -it --name ominirtk-sync -p 9092:9090 ominirtksync:latest
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +

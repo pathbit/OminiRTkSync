@@ -6,7 +6,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from .config import Settings
@@ -82,8 +82,16 @@ class OmniSyncEngine:
 
     def _sync_all_locked(self):
         if not os.path.exists(self.settings.db_path):
-            log_msg("AVISO", f"Aguardando banco do OmniRoute em: {self.settings.db_path}")
-            return {"success": False, "error": "db_not_found"}
+            # O gateway cria o banco ao ser usado pela primeira vez. Ate la,
+            # o arquivo nao existir e o estado NORMAL de uma stack recem
+            # subida -- nao uma falha. Relatar como erro pintava o painel de
+            # vermelho no primeiro minuto de uso e ensinava o operador a
+            # ignorar o indicador, que e o oposto do que ele serve.
+            log_msg("INFO", f"Aguardando o gateway criar o banco em: {self.settings.db_path}")
+            return {"success": True, "waiting_for_gateway": True,
+                    "total_connections": 0, "refreshed": 0, "normalized": 0,
+                    "combos_synced": 0, "details": [],
+                    "timestamp": datetime.now(timezone.utc).isoformat()}
 
         conns = get_all_connections(self.settings.db_path)
         log_msg("INFO", f"Inspecionando {len(conns)} conexões no OmniRoute ({self.settings.db_path})...")

@@ -89,7 +89,7 @@ If the numbers still look wrong, the synchronizer may not be writing at all — 
 Sign in with user `admin` and the **recovery hash** as the password. Find it with:
 
 ```bash
-docker logs ominirtksync 2>&1 | grep "Recovery hash"
+docker logs ominirtk-sync 2>&1 | grep "Recovery hash"
 # or, if the log file is mounted:
 grep "Recovery hash" /app/data/logs/ominirtksync.log
 ```
@@ -97,7 +97,7 @@ grep "Recovery hash" /app/data/logs/ominirtksync.log
 If the log has already rotated past it, the value is on disk:
 
 ```bash
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 To pin your own instead of relying on the generated one, set `DASHBOARD_RECOVERY_HASH` and

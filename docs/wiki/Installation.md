@@ -15,12 +15,12 @@ docker pull ghcr.io/pathbit/ominirtksync:latest
 A working `docker-compose.yml` alongside the gateway:
 
 ```yaml
-name: omniroute-stack
+name: ominirtksync-stack
 
 services:
   omniroute:
     image: diegosouzapw/OmniRoute:latest
-    container_name: omniroute
+    container_name: ominirtk-router
     restart: unless-stopped
     ports:
       # 20128 dentro do container; 8082 no host.
@@ -34,7 +34,7 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: ominirtksync
+    container_name: ominirtk-sync
     restart: unless-stopped
     ports:
       # Internal port 9090 (same in OminiRTKSync); published on 9092.

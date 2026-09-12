@@ -84,7 +84,7 @@ credential on first boot — read it and sign in as `admin`, then set a real
 password on the screen:
 
 ```bash
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 Full detail in [Authentication](Authentication).

@@ -14,7 +14,7 @@ name: ominirtksync-test
 services:
   omniroute:
     image: diegosouzapw/omniroute:latest
-    container_name: ominirtksync-test-gateway
+    container_name: ominirtk-test-router
     restart: unless-stopped
     ports:
       - "127.0.0.1:19129:20128"
@@ -46,7 +46,7 @@ services:
   ominirtksync:
     build: .
     image: ghcr.io/pathbit/ominirtksync:local
-    container_name: ominirtksync-test-sync
+    container_name: ominirtk-test-sync
     restart: unless-stopped
     ports:
       # Porta interna 9090 nos tres sincronizadores; publicada em 19092 aqui.
@@ -69,7 +69,13 @@ services:
       omniroute:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
+      test:
+        [
+          "CMD",
+          "/opt/venv/bin/python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)",
+        ]
       interval: 15s
       timeout: 5s
       retries: 3

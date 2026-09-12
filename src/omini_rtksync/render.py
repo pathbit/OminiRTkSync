@@ -172,6 +172,9 @@ def render_notice_page(title: str, body: str, link_label: str = "") -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Favicon embutido: o /favicon.ico do painel responde 401, entao sem
+       isto a aba fica com o icone generico. Cada sincronizador tem o seu. -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23310a5c'/><g fill='none' stroke='%23ffffff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M16 27 V17'/><path d='M16 17 L8 9'/><path d='M16 17 L24 9'/><circle cx='8' cy='7' r='2.2'/><circle cx='24' cy='7' r='2.2'/></g></svg>">
   <meta name="robots" content="noindex, nofollow">
   <title>{esc(title)}</title>
   <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
@@ -349,12 +352,17 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
               <td>{health_badge(c.health_status, lang)}</td>
               <td class="text-nowrap">{render_remaining(c, lang)}</td>
               <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
-              <td class="small text-secondary">{esc(render_refresh_reason(c, refresh_margin, lang))}</td>
+              <td class="small text-secondary diagnostico">{esc(render_refresh_reason(c, refresh_margin, lang))}</td>
             </tr>""")
 
     return f"""
         <div class="table-responsive">
-          <table class="table table-dark table-hover align-middle mb-0">
+          <table class="table table-dark table-hover align-middle mb-0 tabela-conexoes">
+            <colgroup>
+              <col class="c-provedor"><col class="c-nome"><col class="c-tipo">
+              <col class="c-status"><col class="c-validade"><col class="c-renovacao">
+              <col class="c-diagnostico">
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col">{esc(translate("table.provider", lang))}</th>
@@ -673,8 +681,14 @@ def render_dashboard(
                       padding: .15rem .5rem; font-family: var(--bs-font-monospace); font-size: .78rem;
                       text-transform: uppercase; }}
     .table-dark {{ --bs-table-bg: transparent; --bs-table-border-color: var(--line); }}
+    /* A marca e icone BRANCO sobre um tom claro do proprio tema. O gradiente
+       de duas cores fazia as tres telas parecerem a mesma marca em cores
+       diferentes; com a forma do icone distinta e o fundo discreto, quem
+       identifica o produto e o desenho, e a cor fica por conta do tema. */
     .brand-mark {{ width: 2.25rem; height: 2.25rem; display: grid; place-items: center; border-radius: .5rem;
-                   background: linear-gradient(135deg, var(--brand-a), var(--brand-b)); color: #fff; font-size: 1.1rem; }}
+                   background: color-mix(in srgb, var(--brand-b) 22%, transparent);
+                   border: 1px solid color-mix(in srgb, var(--brand-b) 45%, transparent);
+                   color: #fff; font-size: 1.15rem; }}
     .accordion-item, .accordion-button {{ background: var(--surface); color: var(--text); }}
     .accordion-button:not(.collapsed) {{ background: var(--surface-2); color: #fff; box-shadow: none; }}
     .cron-log {{ white-space: pre-wrap; word-break: break-word; font-size: .8rem; color: var(--text-dim);
@@ -696,6 +710,32 @@ def render_dashboard(
     .barra-acoes .btn {{ height: 2rem; padding-top: 0; padding-bottom: 0;
                          display: inline-flex; align-items: center; line-height: 1; }}
     .barra-acoes .fi {{ line-height: 1; }}
+    /* A tabela de conexoes tem sete colunas, e sem largura declarada o
+       navegador as reparte pelo conteudo: o diagnostico -- a coluna com a frase
+       mais longa -- recebia a menor fatia e quebrava em quatro linhas, enquanto
+       "Tipo" e "Status", de largura fixa, sobravam espaco. Declarar a divisao
+       resolve na origem, e `table-layout: fixed` faz o navegador respeita-la em
+       vez de recalcular pelo conteudo. */
+    .tabela-conexoes {{ table-layout: fixed; }}
+    .tabela-conexoes th, .tabela-conexoes td {{ padding: .6rem .5rem; vertical-align: top; }}
+    .tabela-conexoes col.c-provedor    {{ width: 9rem; }}
+    .tabela-conexoes col.c-nome        {{ width: auto; }}
+    .tabela-conexoes col.c-tipo        {{ width: 8rem; }}
+    .tabela-conexoes col.c-status      {{ width: 6.5rem; }}
+    .tabela-conexoes col.c-validade    {{ width: 10rem; }}
+    .tabela-conexoes col.c-renovacao   {{ width: 12rem; }}
+    .tabela-conexoes col.c-diagnostico {{ width: 22rem; }}
+    /* O nome do provedor e um identificador longo e sem espaco
+       (openai-compatible-chat-ollama-local): sem isto ele estoura a coluna ou
+       forca a tabela a rolar horizontalmente inteira. */
+    .tabela-conexoes .provider-chip {{ display: inline-block; max-width: 100%;
+                                       overflow-wrap: anywhere; white-space: normal; }}
+    .tabela-conexoes .diagnostico {{ overflow-wrap: anywhere; }}
+    /* Em tela estreita a tabela rola sozinha, em vez de espremer as colunas
+       ate o texto virar uma palavra por linha. */
+    @media (max-width: 1200px) {{
+      .tabela-conexoes {{ min-width: 68rem; }}
+    }}
   </style>
 </head>
 <body>
@@ -706,7 +746,7 @@ def render_dashboard(
 
     <header class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
       <div class="d-flex align-items-center gap-3">
-        <span class="brand-mark"><i class="bi bi-lightning-charge-fill" aria-hidden="true"></i></span>
+        <span class="brand-mark"><i class="bi bi-signpost-split-fill" aria-hidden="true"></i></span>
         <div>
           <h1 class="h4 mb-0">OminiRTKSync</h1>
           <p class="text-secondary small mb-0 font-monospace">

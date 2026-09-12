@@ -3,7 +3,7 @@ name: ominirtksync-stack
 services:
   omniroute:
     image: diegosouzapw/omniroute:latest
-    container_name: omniroute
+    container_name: ominirtk-router
     restart: unless-stopped
     ports:
       # Porta interna 20128 (padrao do OmniRoute); publicada em 8082 no host.
@@ -43,8 +43,14 @@ services:
       start_period: 40s
 
   ominirtksync:
+    # Mesmo uid do gateway. Os dois compartilham o volume, e este servico
+    # cria db/ e logs/ no startup: rodando como root, esses diretorios
+    # nasciam com dono root e o omniroute -- que roda como `node` (1000) --
+    # perdia a escrita no proprio volume, recusando o login com
+    # "EACCES: permission denied, mkdir '/app/data/db/backups'".
+    user: "1000:1000"
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: ominirtksync
+    container_name: ominirtk-sync
     restart: unless-stopped
     ports:
       # Porta interna 9090 (igual no 9RTKSync); publicada em 9092 no host.
@@ -85,7 +91,13 @@ services:
         # o primeiro ciclo encontrar o banco ausente.
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
+      test:
+        [
+          "CMD",
+          "/opt/venv/bin/python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)",
+        ]
       interval: 15s
       timeout: 5s
       retries: 3

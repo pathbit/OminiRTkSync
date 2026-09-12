@@ -66,7 +66,7 @@ No primeiro boot com `DASHBOARD_PASSWORD` vazio, o container gera uma
 **credencial de recuperação** e a grava dentro do diretório de dados. Leia com:
 
 ```bash
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 Entre como `admin` com esse valor e defina a sua senha pela tela. A credencial
@@ -138,7 +138,7 @@ Integre o `OminiRTKSync` ao seu `docker-compose.yml` junto ao [OmniRoute](https:
 services:
   omniroute:
     image: diegosouzapw/omniroute:latest
-    container_name: omniroute
+    container_name: ominirtk-router
     restart: unless-stopped
     ports:
       # 20128 dentro do container; 8082 no host.
@@ -158,7 +158,7 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: ominirtksync
+    container_name: ominirtk-sync
     restart: unless-stopped
     ports:
       - "127.0.0.1:9092:9090"
