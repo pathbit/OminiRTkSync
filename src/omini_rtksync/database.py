@@ -87,6 +87,31 @@ def to_iso_utc(epoch_ms: int) -> str:
     )
 
 
+def normalize_expiry_format(db_path: str, connection_id: str, expires_at_ms: int) -> bool:
+    """Regrava expires_at em ISO-8601 sem tocar nos tokens.
+
+    A cura de formato acontecia so junto de uma renovacao bem-sucedida. Quando a
+    renovacao falha -- refresh token revogado, client_id ausente -- o epoch
+    numerico gravado como texto permanecia, e e justamente ele que o OmniRoute
+    le com `new Date(...)` e obtem Invalid Date, desligando a propria renovacao
+    preventiva. O formato e curado de qualquer jeito.
+    """
+    conn = get_db_connection(db_path)
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        tbl = detect_connection_table(conn)
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE {tbl} SET expires_at = ?, updated_at = ? WHERE id = ?",
+            (to_iso_utc(expires_at_ms), now_iso, connection_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
 def update_connection(
     db_path: str, connection_id: str, access_token: str, refresh_token: str, expires_at_ms: int
 ) -> bool:

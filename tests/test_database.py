@@ -12,6 +12,7 @@ from omini_rtksync.database import (
     get_all_combos,
     get_all_connections,
     get_db_connection,
+    normalize_expiry_format,
     update_connection,
 )
 
@@ -155,3 +156,62 @@ class TestOminiDatabase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExpiryFormatHealing(unittest.TestCase):
+    """A cura de formato nao pode depender de a renovacao OAuth dar certo.
+
+    Um epoch numerico gravado como texto e Invalid Date para o OmniRoute, que
+    entao conclui que a conexao nao tem validade conhecida e desliga a propria
+    renovacao preventiva. Se o refresh token estiver revogado, a renovacao falha
+    e, antes desta correcao, o formato quebrado permanecia para sempre.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db_path = os.path.join(self.tmp.name, "storage.sqlite")
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "CREATE TABLE provider_connections ("
+            "id TEXT PRIMARY KEY, provider TEXT, name TEXT, access_token TEXT, "
+            "refresh_token TEXT, api_key TEXT, expires_at TEXT, test_status TEXT, "
+            "created_at TEXT, updated_at TEXT)"
+        )
+        self.epoch_ms = 1789226422362
+        conn.execute(
+            "INSERT INTO provider_connections VALUES "
+            "('c1','antigravity','Teste','tok','ref',NULL,?, 'ok','','')",
+            (str(self.epoch_ms),),
+        )
+        conn.commit()
+        conn.close()
+
+    def stored(self):
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT expires_at, access_token, refresh_token FROM provider_connections WHERE id='c1'"
+        ).fetchone()
+        conn.close()
+        return row
+
+    def test_the_seeded_value_is_the_broken_shape(self):
+        self.assertTrue(self.stored()[0].isdigit())
+
+    def test_normalizing_rewrites_the_expiry_as_iso(self):
+        self.assertTrue(normalize_expiry_format(self.db_path, "c1", self.epoch_ms))
+        expiry = self.stored()[0]
+        self.assertFalse(expiry.isdigit())
+        self.assertTrue(expiry.endswith("Z"))
+        # Tem de ser relegivel como a mesma instante.
+        parsed = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        self.assertEqual(int(parsed.timestamp() * 1000), self.epoch_ms)
+
+    def test_normalizing_never_touches_the_tokens(self):
+        normalize_expiry_format(self.db_path, "c1", self.epoch_ms)
+        _, access, refresh = self.stored()
+        self.assertEqual(access, "tok")
+        self.assertEqual(refresh, "ref")
+
+    def test_an_unknown_connection_is_reported_as_not_written(self):
+        self.assertFalse(normalize_expiry_format(self.db_path, "nao-existe", self.epoch_ms))

@@ -120,3 +120,19 @@ Written next to the database (or `DATA_DIR`), never inside the gateway's schema:
 | `.dashboard_recovery` | Break-glass hash, mode `0600`. |
 | `ui_prefs.sqlite` | Interface language. |
 | `logs/ominirtksync.log` | Rotating persistent log. |
+
+
+## Encryption at rest
+
+OmniRoute encrypts `access_token`, `refresh_token` and `api_key` in place, prefixing the stored
+value with `enc:v1:` (`src/lib/db/encryption.ts`). The synchronizer writes plaintext, and that is
+safe on purpose: `decrypt()` returns any value without the prefix unchanged — the path it labels
+"legacy plaintext or passthrough mode" — and the gateway re-encrypts the row on its next write.
+
+Two consequences worth knowing:
+
+- A token this synchronizer wrote shows up in the database as plaintext until OmniRoute touches
+  the row again. That is not a leak of anything new: whoever can read `storage.sqlite` could
+  already read the decryption key next to it.
+- Never write a value that already starts with `enc:v1:` back as if it were a token. It is
+  ciphertext, not a credential, and `encrypt()` deliberately refuses to double-encrypt it.

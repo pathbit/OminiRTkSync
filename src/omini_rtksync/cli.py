@@ -10,7 +10,12 @@ from datetime import datetime
 from .config import Settings
 from .logs import get_logger, setup_logging
 from .cron import CronScheduler
-from .database import get_all_combos, get_all_connections, update_connection
+from .database import (
+    get_all_combos,
+    get_all_connections,
+    normalize_expiry_format,
+    update_connection,
+)
 from .discovery import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
 from .providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
@@ -47,6 +52,7 @@ class OmniSyncEngine:
         log_msg("INFO", f"Inspecionando {len(conns)} conexões no OmniRoute ({self.settings.db_path})...")
 
         refreshed = 0
+        normalized = 0
         now_ms = int(time.time() * 1000)
 
         for c in conns:
@@ -63,6 +69,16 @@ class OmniSyncEngine:
 
                 exp_ms = parse_expiry_to_ms(c.get("expiresAt"))
                 rem_sec = int((exp_ms - now_ms) / 1000) if exp_ms else 0
+
+                # Cura o formato antes de tentar renovar. Um epoch numerico em
+                # texto e Invalid Date para o OmniRoute, que entao conclui que a
+                # conexao nao tem validade conhecida e para de renovar sozinho.
+                # Se a renovacao falhar, o formato ao menos fica legivel.
+                raw_expiry = str(c.get("expiresAt") or "")
+                if exp_ms and raw_expiry.isdigit():
+                    if normalize_expiry_format(self.settings.db_path, cid, exp_ms):
+                        normalized += 1
+                        log_msg("STATUS", f"[{provider} · {name}] expires_at normalizado para ISO-8601")
 
                 if rem_sec <= self.settings.refresh_margin or not c.get("accessToken"):
                     if ref_tok:
@@ -152,7 +168,12 @@ class OmniSyncEngine:
 
             log_msg("INFO", f"[{provider} · {name}] Conexão preservada sem pendências")
 
-        return {"success": True, "total": len(conns), "refreshed": refreshed}
+        return {
+            "success": True,
+            "total": len(conns),
+            "refreshed": refreshed,
+            "normalized": normalized,
+        }
 
 
 def print_status(settings: Settings):
