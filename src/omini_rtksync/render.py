@@ -23,12 +23,12 @@ JQUERY_JS = "https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"
 
 # Estado semântico -> (classe do badge, ícone)
 HEALTH_PRESENTATION = {
-    "ativo": ("text-bg-success", "bi-check-circle-fill"),
-    "expirando_em_breve": ("text-bg-warning", "bi-hourglass-split"),
-    "expirado": ("text-bg-danger", "bi-x-octagon-fill"),
+    "active": ("text-bg-success", "bi-check-circle-fill"),
+    "expiring_soon": ("text-bg-warning", "bi-hourglass-split"),
+    "expired": ("text-bg-danger", "bi-x-octagon-fill"),
     "rate_limited": ("text-bg-warning", "bi-pause-circle-fill"),
-    "sem_expiracao": ("text-bg-secondary", "bi-infinity"),
-    "desconhecido": ("text-bg-secondary", "bi-question-circle-fill"),
+    "no_expiration": ("text-bg-secondary", "bi-infinity"),
+    "unknown": ("text-bg-secondary", "bi-question-circle-fill"),
 }
 
 
@@ -97,7 +97,7 @@ def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LA
 
 def health_badge(status: str, lang: str) -> str:
     """Monta o badge de saúde com ícone de fonte."""
-    css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["desconhecido"])
+    css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])
     label = translate(f"health.{status}", lang)
     return (
         f'<span class="badge {css} d-inline-flex align-items-center gap-1">'
