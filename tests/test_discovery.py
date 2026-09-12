@@ -1,4 +1,4 @@
-"""Unit tests for discovery engine and multiple providers in OminiRTKSync."""
+"""Testes unitários para motor de descoberta e múltiplos provedores do OminiRTKSync."""
 
 import json
 import os

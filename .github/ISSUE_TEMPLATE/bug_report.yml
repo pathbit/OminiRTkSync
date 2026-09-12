@@ -1,39 +1,38 @@
-name: Bug Report
-description: Report a defect or synchronization issue in OminiRTKSync
+name: Relato de Bug
+description: Reporte um problema ou falha de sincronização no OminiRTKSync
 title: "[BUG] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for helping improve OminiRTKSync! Please provide details about the issue so we can reproduce and fix it promptly.
+        Obrigado por ajudar a aprimorar o OminiRTKSync! Forneça detalhes sobre a falha para podermos reproduzir e corrigir rapidamente.
   - type: input
     id: provider
     attributes:
-      label: Affected Provider
-      description: Which OmniRoute connection failed? (e.g., Antigravity, Claude, Groq, Mistral, Ollama)
-      placeholder: e.g., Antigravity / Google OAuth
+      label: Provedor Afetado
+      description: Qual conexão do OmniRoute apresentou falha? (ex: Antigravity, Claude, Groq, Mistral, Ollama)
+      placeholder: ex: Antigravity / Google OAuth
     validations:
       required: true
   - type: textarea
     id: description
     attributes:
-      label: Problem Description
-      description: What happened and what was the expected behavior?
+      label: Descrição do Problema
+      description: O que aconteceu e qual era o comportamento esperado?
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Logs and Error Messages
-      description: Paste relevant container logs or command output
+      label: Logs e Mensagens de Erro
+      description: Cole os logs do container ou do comando OminiRTKSync
       render: shell
   - type: input
     id: version
     attributes:
-      label: OminiRTKSync Version and Environment
-      description: Docker version, container image tag, or local Python version
-      placeholder: e.g., ghcr.io/pathbit/ominirtksync:latest on macOS / Linux
+      label: Versão do OminiRTKSync e Ambiente
+      description: Versão do Docker, imagem utilizada ou Python local
+      placeholder: ex: ghcr.io/pathbit/ominirtksync:latest no macOS Sequoia
     validations:
       required: true
-

@@ -1,15 +1,26 @@
-"""Universal token and connection providers for OmniRoute."""
+"""Provedores universais de tokens e conexões para OmniRoute."""
 
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from .credential_check import (
+    DEFAULT_TIMEOUT_SECONDS,
+    STATE_INVALID,
+    STATE_RATE_LIMITED,
+    STATE_UNREACHABLE,
+    STATE_VALID,
+    check_connection,
+)
+from .models import ConnectionRecord
+
 
 class GoogleProvider:
-    """OAuth renewer for Google accounts (Antigravity / Gemini CLI) in OmniRoute."""
+    """Renovador OAuth para contas Google (Antigravity / Gemini CLI) no OmniRoute."""
 
     OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -55,7 +66,7 @@ class GoogleProvider:
         self, refresh_token: str, client_id: str, client_secret: str
     ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         if not client_id or not client_secret:
-            return False, None, "client_id or client_secret not configured in environment nor found in shared.js"
+            return False, None, "client_id ou client_secret não configurado no ambiente nem encontrado em shared.js"
         payload = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -85,7 +96,7 @@ class GoogleProvider:
 
 
 class GenericOAuthProvider:
-    """Generic OAuth monitor and synchronizer for OmniRoute (Claude, GitHub, Codex, Kiro)."""
+    """Monitor e sincronizador OAuth genérico para OmniRoute (Claude, GitHub, Codex, Kiro)."""
 
     KNOWN_TOKEN_URLS = {
         "claude": "https://api.anthropic.com/v1/oauth/token",
@@ -109,7 +120,7 @@ class GenericOAuthProvider:
         now_ms = int(time.time() * 1000)
         provider = conn.get("provider", "")
 
-        # 1. Check if host has discovered local credential
+        # 1. Verifica se há credencial local descoberta no host
         if self.discovery:
             local = self.discovery.get_credential_for_provider(provider)
             if local and local.get("accessToken") and local.get("accessToken") != conn.get("accessToken"):
@@ -120,22 +131,22 @@ class GenericOAuthProvider:
                     "expiresAt": exp_ms,
                 }
                 src = local.get("source_path", "host")
-                messages.append(f"Token synchronized from host ({src})")
+                messages.append(f"Token sincronizado a partir do host ({src})")
                 return True, res, messages
 
-        # 2. Expiry evaluation
+        # 2. Avaliação de expiração
         from .normalizer import parse_expiry_to_ms
         exp_ms = parse_expiry_to_ms(conn.get("expiresAt"))
         if not exp_ms:
-            messages.append("OAuth connection without temporal expiry timestamp")
+            messages.append("Conexão OAuth sem registro temporal de expiração")
             return False, None, messages
 
         rem = int((exp_ms - now_ms) / 1000)
         if rem > margin_seconds:
-            messages.append(f"Token valid for another {rem // 60} min ({rem}s)")
+            messages.append(f"Token válido por mais {rem // 60} min ({rem}s)")
             return False, None, messages
 
-        # 3. Refresh attempt
+        # 3. Tentativa de refresh
         refresh_token = conn.get("refreshToken")
         token_url = self.KNOWN_TOKEN_URLS.get(provider.lower())
         client_id = os.environ.get(f"{provider.upper()}_CLIENT_ID")
@@ -171,52 +182,219 @@ class GenericOAuthProvider:
                             "refreshToken": data.get("refresh_token", refresh_token),
                             "expiresAt": now_ms + (exp_in * 1000),
                         }
-                        messages.append(f"OAuth token renewed successfully ({exp_in}s)")
+                        messages.append(f"Token OAuth renovado com sucesso ({exp_in}s)")
                         return True, res, messages
             except Exception as e:
-                messages.append(f"Remote refresh failed: {e}")
+                messages.append(f"Refresh remoto retornou: {e}")
 
-        messages.append(f"Token near expiration ({rem}s remaining)")
+        messages.append(f"Token próximo da expiração ({rem}s restantes)")
         return False, None, messages
 
 
 class ApiKeyProvider:
-    """Manager and health sanitizer for API Key connections in OmniRoute."""
+    """Gerenciador e sanitizador para conexões de API Key no OmniRoute."""
 
-    def __init__(self, discovery: Optional[Any] = None):
+    def __init__(
+        self,
+        discovery: Optional[Any] = None,
+        validate_credentials: bool = False,
+        validation_timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        opener: Optional[Any] = None,
+    ):
         self.discovery = discovery
+        # Desligado por padrão: montar o provider não pode gerar tráfego de saída.
+        self.validate_credentials = validate_credentials
+        self.validation_timeout = validation_timeout
+        self.opener = opener
 
     def can_handle(self, conn: Dict[str, Any]) -> bool:
-        return bool(conn.get("hasApiKey"))
+        # Uma instancia local carrega uma chave de fachada, entao `hasApiKey`
+        # sozinho tambem casaria com ela. Como o motor consulta este provider
+        # antes do LocalProvider, o catalogo local nunca seria descoberto -- e
+        # por isso que o Ollama local aparecia sem modelo nenhum no painel.
+        return bool(conn.get("hasApiKey")) and not LocalProvider.is_local_connection(conn)
 
     def check_and_refresh(self, conn: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
         messages = []
+        # `modified` decide se vale gravar; `renewed` decide se conta como
+        # renovacao no resumo do ciclo. Carimbar o horario de uma verificacao
+        # muda a linha, mas nao renovou credencial nenhuma -- e contar isso
+        # inflava o "N renovadas" do cron.
         modified = False
+        renewed = False
         res = dict(conn)
         provider = conn.get("provider", "")
 
-        # 1. Check if newer API key is available on host
+        # 1. Verifica se há chave de API mais recente no host
         if self.discovery:
             local = self.discovery.get_credential_for_provider(provider)
             if local and local.get("apiKey") and local.get("apiKey") != conn.get("apiKey"):
                 res["apiKey"] = local["apiKey"]
                 modified = True
+                renewed = True
                 src = local.get("source_path", "host")
-                messages.append(f"API key synchronized from host ({src})")
+                messages.append(f"Chave de API sincronizada a partir do host ({src})")
+
+        # 2. Pergunta ao provedor se a chave ainda é aceita. Antes daqui a conexão
+        # era declarada "operacional e ativa" sem nenhuma verificação.
+        if self.validate_credentials:
+            record = ConnectionRecord.from_row(res)
+            result = check_connection(
+                record, timeout=self.validation_timeout, opener=self.opener
+            )
+            res.update(result.to_dict())
+            modified = True
+
+            if result.state == STATE_VALID:
+                res["testStatus"] = "active"
+                messages.append(f"Chave aceita pelo provedor ({result.detail})")
+            elif result.state == STATE_INVALID:
+                res["testStatus"] = "invalid"
+                messages.append(f"Chave RECUSADA pelo provedor ({result.detail})")
+            elif result.state == STATE_RATE_LIMITED:
+                messages.append(f"Provedor aplicou rate limit na validação ({result.detail})")
+            elif result.state == STATE_UNREACHABLE:
+                messages.append(f"Provedor inacessível, chave não verificada: {result.detail}")
+            else:
+                messages.append(result.detail or "Credencial não verificável")
 
         if not messages:
-            messages.append("API key operational and healthy")
+            messages.append("Chave de API inalterada")
 
-        return modified, res if modified else None, messages
+        return renewed, res if modified else None, messages
+
+
+# Catalog endpoints, in attempt order: Ollama-native and the OpenAI standard.
+MODEL_CATALOG_PATHS = ("/api/tags", "/v1/models", "/models")
+PROBE_TIMEOUT_SECONDS = 3.0
+
+LOCAL_PROVIDER_MARKERS = ("ollama", "vllm", "lmstudio", "llamacpp", "localai", "openai-compatible")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")
 
 
 class LocalProvider:
-    """Monitor for local OpenAI-compatible connections (Ollama, vLLM) in OmniRoute."""
+    """Health monitor for local OpenAI-compatible instances (Ollama, vLLM, LM Studio)."""
+
+    @staticmethod
+    def _base_url(conn: Dict[str, Any]) -> str:
+        especifico = conn.get("providerSpecificData") or {}
+        return str(
+            conn.get("baseUrl")
+            or especifico.get("baseUrl")
+            or especifico.get("baseURL")
+            or ""
+        )
+
+    @classmethod
+    def is_local_connection(cls, conn: Dict[str, Any]) -> bool:
+        """Classificacao de "local" compartilhada, para os providers nao brigarem."""
+        provider = str(conn.get("provider", "")).lower()
+        endereco = cls._base_url(conn)
+        if endereco:
+            # Endereco declarado decide sozinho. O marcador "ollama" tambem casa
+            # com a conta hospedada em https://ollama.com/v1, e trata-la como
+            # local mandaria o sincronizador sondar um catalogo que nao existe
+            # ali, alem de tirar a conexao do caminho de validacao de chave.
+            return any(host in endereco for host in LOCAL_HOSTS)
+        if any(marker in provider for marker in LOCAL_PROVIDER_MARKERS):
+            return True
+        return False
 
     def can_handle(self, conn: Dict[str, Any]) -> bool:
-        p = conn.get("provider", "").lower()
-        return "ollama" in p or "openai-compatible" in p or not (conn.get("isOAuth") or conn.get("hasApiKey"))
+        if self.is_local_connection(conn):
+            return True
+        # Sem token e sem chave nao ha o que outro provider faca com a conexao.
+        return not (conn.get("isOAuth") or conn.get("hasApiKey"))
+
+    def discover_models(self, base_url: str, api_key: str = "") -> Tuple[List[str], str]:
+        """Query the local instance catalog. Returns (models, error)."""
+        if not base_url:
+            return [], "baseUrl not declared on the connection"
+
+        root = base_url.rstrip("/")
+        # An OpenAI-shaped baseUrl already ends in /v1; the root serves /api/tags.
+        origin = root[: -len("/v1")] if root.endswith("/v1") else root
+        last_error = ""
+        answered = False
+
+        for path in MODEL_CATALOG_PATHS:
+            target = f"{origin}{path}" if path.startswith("/api") else f"{root}{path}"
+            try:
+                req = urllib.request.Request(
+                    target, headers={"User-Agent": "OminiRTKSync-LocalProbe/1.0"}
+                )
+                if api_key:
+                    req.add_header("Authorization", f"Bearer {api_key}")
+                with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_SECONDS) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                # The host answered, this path just is not the right one — keep trying.
+                last_error = str(e)
+                continue
+            except (urllib.error.URLError, OSError) as e:
+                # Nothing is listening: trying the remaining paths only multiplies the
+                # timeout (3 endpoints x 3s) on every sweep. Give up now.
+                return [], str(e)
+            except ValueError as e:
+                last_error = str(e)
+                continue
+
+            # Chegar aqui significa resposta HTTP valida e JSON parseavel: o
+            # servico esta de pe, tendo modelo ou nao.
+            answered = True
+            models = self._extract_model_names(payload)
+            if models:
+                return models, ""
+
+        if answered:
+            return [], ""
+        return [], last_error or "no model returned by the local instance"
+
+    @staticmethod
+    def _extract_model_names(payload: Any) -> List[str]:
+        """Extract model names from the Ollama (/api/tags) and OpenAI (/v1/models) shapes."""
+        if not isinstance(payload, dict):
+            return []
+        entries = payload.get("models") or payload.get("data") or []
+        names = []
+        for entry in entries:
+            if isinstance(entry, str):
+                names.append(entry)
+            elif isinstance(entry, dict):
+                name = entry.get("name") or entry.get("id") or entry.get("model")
+                if name:
+                    names.append(str(name))
+        return names
 
     def check_and_refresh(self, conn: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
-        return False, None, ["Local connection operational"]
+        """Sonda a instancia local.
 
+        O primeiro elemento e a contagem de renovacao do ciclo: uma sondagem
+        nunca renova credencial, entao e sempre False. O dicionario devolvido e
+        o que deve ser gravado.
+        """
+        models, probe_error = self.discover_models(self._base_url(conn), conn.get("apiKey") or "")
+
+        if models:
+            return (
+                False,
+                {"discoveredModels": models, "testStatus": "active"},
+                [f"Local instance answered with {len(models)} model(s): {', '.join(models[:5])}"],
+            )
+
+        # Erro vazio significa que a instancia respondeu com catalogo vazio --
+        # instalacao nova, sem modelo baixado. Esta no ar.
+        if not probe_error:
+            return (
+                False,
+                {"discoveredModels": [], "testStatus": "active"},
+                ["Local instance answered with an empty model catalog"],
+            )
+
+        # With no catalog response the connection is not assumed healthy: this is
+        # exactly the "the local Ollama went down and nobody noticed" case.
+        return (
+            False,
+            {"testStatus": "unreachable", "lastError": probe_error},
+            [f"Local instance did not answer the model catalog: {probe_error}"],
+        )

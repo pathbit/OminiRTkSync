@@ -1,4 +1,4 @@
-"""Unit tests for OminiRTKSync CronScheduler."""
+"""Testes unitários para o CronScheduler do OminiRTKSync."""
 
 import time
 import unittest

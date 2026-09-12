@@ -1,4 +1,4 @@
-"""Tests for HTTP Basic Auth and protected routes in OminiRTKSync."""
+"""Testes de autenticação HTTP Basic Auth e rotas protegidas no OminiRTKSync."""
 
 import base64
 import json
@@ -52,7 +52,7 @@ class TestOminiWebAuth(unittest.TestCase):
         url = f"http://127.0.0.1:{self.settings.web_port}/"
         try:
             urllib.request.urlopen(url, timeout=3.0)
-            self.fail("Should return HTTP 401")
+            self.fail("Deveria retornar HTTP 401")
         except urllib.error.HTTPError as e:
             self.assertEqual(e.code, 401)
             self.assertIn("Basic", e.headers.get("WWW-Authenticate", ""))

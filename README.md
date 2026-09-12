@@ -6,38 +6,48 @@
 [![Python Version](https://img.shields.io/badge/python-3.14.7-blue.svg)](https://www.python.org/ftp/python/3.14.7/python-3.14.7-macos11.pkg)
 [![Docker Package](https://img.shields.io/badge/docker-ghcr.io%2Fpathbit%2Fominirtksync-blue)](https://github.com/pathbit/OminiRTkSync/pkgs/container/ominirtksync)
 
-**`OminiRTKSync`** (*OminiRoute Universal Token & Connection Synchronizer*) is the dedicated connection guardian and token synchronizer for the [OmniRoute](https://github.com/diegosouzapw/OmniRoute) AI gateway. It manages relational credential persistence, continuous OAuth token renewal, and disruption-free routing across AI providers.
+O **`OminiRTKSync`** (*OminiRoute Universal Token & Connection Synchronizer*) é o sincronizador e guardião de conexões dedicado ao gateway [OmniRoute](https://github.com/diegosouzapw/OmniRoute). Ele gerencia a persistência relacional de credenciais, auto-renovação de tokens OAuth e prevenção de interrupções de rota em inteligência artificial.
 
-If you are running the original 9Router stack, refer to the sibling project [9RTKSync](https://github.com/pathbit/9RTKSync) engineered for [9Router](https://github.com/decolua/9router).
+Caso esteja utilizando o 9Router original, utilize o projeto irmão [9RTKSync](https://github.com/pathbit/9RTKSync) configurado para a arquitetura do [9Router](https://github.com/decolua/9router).
 
----
 
-## Key Features
+## Documentation
 
-* **Relational Schema Support for OmniRoute**
-  * Direct synchronization with SQLite's `provider_connections` table (`storage.sqlite`), managing native relational fields including `access_token`, `refresh_token`, `expires_at`, and `test_status`.
-* **Continuous OAuth Token Renewal**
-  * Automatic renewal of Google Antigravity and Gemini CLI accounts prior to expiration using a configurable safety buffer.
-* **Database Auto-Discovery**
-  * Automatic path detection between standard container locations (`/app/data/storage.sqlite`) and local developer setups (`~/.omniroute/data/storage.sqlite`).
-* **Embedded Web Dashboard**
-  * Embedded control panel on port `9191` for monitoring the status of registered connections and triggering on-demand synchronization passes.
-* **Complete Virtual Environment Isolation**
-  * Secure and isolated execution inside Python virtual environments both within Docker containers (`/opt/venv`) and in local development environments (`.venv`).
+The full documentation lives in the [project wiki](../../wiki): installation, the complete
+environment-variable contract, the dashboard, authentication and break-glass recovery,
+persistent logging, architecture, troubleshooting, and the upstream gateway fixes.
+
+Wiki pages are generated from [`docs/wiki/`](docs/wiki) — edit them there and open a pull
+request; a push to `master` republishes the wiki automatically.
 
 ---
 
-## How to Run via Docker
+## Recursos Principais
 
-The official multi-arch Docker package for OminiRTKSync is published to the GitHub Container Registry (GHCR):
+* **Compatibilidade com Schema Relacional do OmniRoute**
+  * Sincronização direta com a tabela `provider_connections` do SQLite (`storage.sqlite`), manipulando campos nativos como `access_token`, `refresh_token`, `expires_at` e `test_status`.
+* **Renovação Contínua de Tokens OAuth**
+  * Auto-renovação de contas Google Antigravity e Gemini CLI antes de sua expiração com margem de segurança ajustável.
+* **Auto-Detecção de Bancos de Dados**
+  * Detecção automática entre caminhos padrão do container (`/app/data/storage.sqlite`) e instalações locais (`~/.omniroute/data/storage.sqlite`).
+* **Dashboard Web Embutido**
+  * Painel de controle na porta `9090` (publicada em `9092`) para monitoramento do estado de cada conexão registrada e acionamento sob demanda de sincronização.
+* **Isolamento Completo em Virtual Environment**
+  * Execução segura e isolada em ambiente virtual Python tanto em containers Docker (`/opt/venv`) quanto em instalações de desenvolvimento local (`.venv`).
+
+---
+
+## Como Executar via Docker
+
+O pacote Docker oficial do OminiRTKSync é distribuído via GitHub Container Registry (GHCR):
 
 ```bash
 docker pull ghcr.io/pathbit/ominirtksync:latest
 ```
 
-### Docker Compose Example
+### Exemplo no Docker Compose
 
-Integrate `OminiRTKSync` into your `docker-compose.yml` alongside [OmniRoute](https://github.com/diegosouzapw/OmniRoute):
+Integre o `OminiRTKSync` ao seu `docker-compose.yml` junto ao [OmniRoute](https://github.com/diegosouzapw/OmniRoute):
 
 ```yaml
 services:
@@ -53,8 +63,8 @@ services:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_BASE_URL=http://localhost:20128
       - NODE_ENV=production
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-PathbitDevs2026!}
-      - JWT_SECRET=${JWT_SECRET:-omniroute-jwt-secret-key-pathbit}
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?defina no .env}
+      - JWT_SECRET=${JWT_SECRET:?openssl rand -hex 32}
       - REQUIRE_API_KEY=false
       - REQUIRE_LOGIN=false
     volumes:
@@ -62,10 +72,10 @@ services:
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: router-sync
+    container_name: ominirtksync
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9191:9191"
+      - "127.0.0.1:9092:9090"
     volumes:
       - omniroute_data:/app/data
       - ${HOME}:/root/host:ro
@@ -76,13 +86,13 @@ services:
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
       - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
-      - WEB_PORT=${WEB_PORT:-9191}
+      - WEB_PORT=${WEB_PORT:-9090}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
     depends_on:
       - omniroute
     healthcheck:
-      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9191/healthz', timeout=3)"]
+      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -94,19 +104,19 @@ volumes:
 
 ---
 
-## How to Run Locally in Virtual Environment
+## Como Executar Localmente em Virtual Environment
 
-To run directly on your host machine using [Python 3.14.7](https://www.python.org/ftp/python/3.14.7/python-3.14.7-macos11.pkg):
+Para executar diretamente no host utilizando [Python 3.14.7](https://www.python.org/ftp/python/3.14.7/python-3.14.7-macos11.pkg):
 
-### 1. Clone the Repository
+### 1. Clonar o Repositório
 
 ```bash
 git clone https://github.com/pathbit/OminiRTkSync.git
 cd OminiRTkSync
 ```
 
-### 2. Create and Activate Virtual Environment
-
+### 2. Criar e Ativar o Virtual Environment
+ 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -114,106 +124,84 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-### 3. Configure Environment Variables (.env)
+### 3. Configurar Variáveis de Ambiente (.env)
 
-Copy the official template to create your local `.env` file (the `.env` file is strictly ignored by git):
+Copie o modelo oficial para criar seu `.env` local (o arquivo `.env` é estritamente ignorado no git):
 
 ```bash
 cp .env.example .env
 ```
 
-### 4. Available Commands
+### 4. Comandos Disponíveis
 
 ```bash
-# Display OmniRoute connection status table
-OminiRTKSync --status --db-path /path/to/storage.sqlite
+# Exibir status das conexões do OmniRoute
+OminiRTKSync --status --db-path /caminho/para/storage.sqlite
 
-# Execute an immediate single synchronization run
-OminiRTKSync --once --db-path /path/to/storage.sqlite
+# Executar uma rodada única imediata de sincronização
+OminiRTKSync --once --db-path /caminho/para/storage.sqlite
 
-# Run in continuous daemon mode with web dashboard
-OminiRTKSync --daemon --db-path /path/to/storage.sqlite
+# Executar em modo daemon contínuo com dashboard web
+OminiRTKSync --daemon --db-path /caminho/para/storage.sqlite
 ```
 
 ---
 
-## Environment Variables
+## Variáveis de Ambiente
 
-| Variable | Default | Description |
+| Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
-| `DB_PATH` | `/app/data/storage.sqlite` | Path to OmniRoute SQLite storage file |
-| `OMNIROUTE_URL` | `http://127.0.0.1:20128` | Base URL for OmniRoute gateway health and connectivity checks |
-| `SYNC_INTERVAL` | `300` | Interval in seconds between daemon passes and cron renewals |
-| `REFRESH_MARGIN` | `900` | Safety buffer in seconds before expiration to trigger token refresh |
-| `ENABLE_WEB_DASHBOARD` | `1` | Enable embedded HTTP web dashboard (`1` for yes, `0` for no) |
-| `WEB_PORT` | `9191` | HTTP port for web dashboard |
-| `WEB_HOST` | `0.0.0.0` | Network binding interface for web dashboard |
-| `DASHBOARD_USER` | `admin` | Username for HTTP Basic Auth |
-| `DASHBOARD_PASSWORD` | `pathbit` | Initial password for HTTP Basic Auth |
-| `ANTIGRAVITY_TOKEN_PATH` | auto | Custom path to Antigravity token file |
+| `DB_PATH` | `/app/data/storage.sqlite` | Caminho do arquivo SQLite do OmniRoute |
+| `OMNIROUTE_URL` | `http://127.0.0.1:20128` | URL base do gateway OmniRoute para testes de conectividade |
+| `SYNC_INTERVAL` | `300` | Intervalo em segundos entre varreduras no modo daemon e cron |
+| `REFRESH_MARGIN` | `900` | Margem prévia em segundos para renovação de tokens |
+| `ENABLE_WEB_DASHBOARD` | `1` | Ativa o dashboard web embutido (`1` para sim, `0` para não) |
+| `WEB_PORT` | `9090` | Porta do dashboard web HTTP |
+| `WEB_HOST` | `0.0.0.0` | Interface de rede para o servidor web |
+| `DASHBOARD_USER` | `admin` | Usuário de autenticação HTTP Basic Auth |
+| `DASHBOARD_PASSWORD` | *(vazio)* | Senha do painel. Vazia, o primeiro acesso usa a credencial de recuperação gerada no primeiro boot. |
+| `ANTIGRAVITY_TOKEN_PATH` | auto | Caminho customizado para arquivo de token do Antigravity |
 
 ---
 
-## Web Dashboard
+## Dashboard Web
 
-With `ENABLE_WEB_DASHBOARD=1`, open in your browser:
+Com `ENABLE_WEB_DASHBOARD=1`, acesse no navegador:
 
-👉 **http://localhost:9191**
+👉 **http://localhost:9092**
 
-Dashboard capabilities:
-* Monitoring of all connections registered in OmniRoute.
-* Real-time activation status of API keys and OAuth 2.0 accounts.
-* Triggering immediate synchronization via REST API (`POST /api/sync`).
+Recursos do painel:
+* Monitoramento de todas as conexões cadastradas no OmniRoute.
+* Estado de ativação de chaves de API e contas OAuth 2.0.
+* Disparo de sincronização imediata via API REST (`POST /api/sync`).
 
 ---
 
-## Unit Testing
+## Testes Unitários
 
-You can run the full test suite with zero dependencies installed on your host machine (using Docker), or optionally inside a local Python virtual environment.
-
-### Option 1. Via Docker Container (Zero Host Installation)
-
-The only requirement is having Docker running:
-
-```bash
-# Via shell script directly
-./run_tests.sh
-
-# Or via Makefile
-make test-container
-
-# Or via Docker Compose
-docker compose -f docker-compose.test.yml run --rm test
-```
-
-### Option 2. Local Virtual Environment (Optional Prerequisites)
-
-If you prefer testing directly on your host machine with Python 3.14+:
+Execute a suíte de testes completa dentro do virtual environment:
 
 ```bash
 source .venv/bin/activate
-make test
-# Or directly
 PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
 ---
 
-## Contributing and Branch Protection
+## Contribuição e Proteção da Branch Master
 
-* The `master` branch is protected. All contributions must be submitted via Pull Requests and pass the complete CI matrix.
-* Feedback and bug reports can be submitted via [Issues](https://github.com/pathbit/OminiRTkSync/issues).
-* Official upstream gateway repository: [OmniRoute on GitHub](https://github.com/diegosouzapw/OmniRoute).
-
----
-
-## License
-
-Distributed under the MIT License. The full text is available in [LICENSE](https://github.com/pathbit/OminiRTkSync/blob/master/LICENSE).
-
-In short: you are free to use, copy, modify, merge, publish, distribute, sublicense, and sell copies, provided that copyright and permission notices are included in all copies. The software is provided as-is, without warranties.
+* A branch `master` é protegida. Toda contribuição deve ser enviada via Pull Request e passar pela suíte de integração contínua.
+* Questões e sugestões podem ser submetidas em [Issues](https://github.com/pathbit/OminiRTkSync/issues).
+* Referência oficial do projeto base: [OmniRoute no GitHub](https://github.com/diegosouzapw/OmniRoute).
 
 ---
 
-Developed with ❤️ by [Pathbit](https://pathbit.co/)
+## 📄 Licença
 
+Distribuído sob a Licença MIT. O texto completo está em [LICENSE](https://github.com/pathbit/OminiRTkSync/blob/master/LICENSE).
+
+Na prática: use, copie, altere e redistribua à vontade, inclusive comercialmente, desde que o aviso de copyright e a licença acompanhem as cópias. O software é fornecido como está, sem garantias.
+
+---
+
+Desenvolvido com ❤️ pela [Pathbit](https://pathbit.co/)

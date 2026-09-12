@@ -13,22 +13,43 @@ services:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_BASE_URL=http://localhost:20128
       - NODE_ENV=production
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-PathbitDevs2026!}
-      - JWT_SECRET=${JWT_SECRET:-omniroute-jwt-secret-key-pathbit}
+      # Sem valor de fallback: um default publicado em arquivo de exemplo vira
+      # a senha real de toda implantacao que so copiou e colou. O compose
+      # recusa subir ate que as duas variaveis estejam definidas no .env.
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?defina INITIAL_PASSWORD no .env}
+      - JWT_SECRET=${JWT_SECRET:?defina JWT_SECRET no .env (openssl rand -hex 32)}
       - REQUIRE_API_KEY=false
+      # REQUIRE_LOGIN=false so e aceitavel porque a porta acima esta presa em
+      # 127.0.0.1. Ao expor 20128 na rede, mude para true.
       - REQUIRE_LOGIN=false
     volumes:
       - omniroute_data:/app/data
+    # Sem este healthcheck o `condition: service_healthy` la embaixo nao tem o
+    # que esperar, e o compose recusa subir a stack inteira dizendo que a
+    # dependencia nao declara healthcheck.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:20128/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # O primeiro boot roda as migracoes e cria o storage.sqlite; da folga.
+      start_period: 40s
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest
-    container_name: router-sync
+    container_name: ominirtksync
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9191:9191"
+      # Porta interna 9090 (igual no 9RTKSync); publicada em 9092 no host.
+      # O bind em 127.0.0.1 mantem o painel e o SQLite fora da internet.
+      - "127.0.0.1:9092:9090"
     volumes:
       - omniroute_data:/app/data
       - ${HOME}:/root/host:ro
+      - ominirtksync_logs:/app/data/logs
     environment:
       - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
@@ -36,11 +57,36 @@ services:
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
       - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
-      - WEB_PORT=${WEB_PORT:-9191}
+      - WEB_PORT=${WEB_PORT:-9090}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
+      # Credencial de emergencia (usuario 'admin' + este valor como senha).
+      # Se omitida, e gerada no primeiro boot e registrada no arquivo de log.
+      # - DASHBOARD_RECOVERY_HASH=
+      - CRON_ENABLED=${CRON_ENABLED:-1}
+      # - CRON_INTERVAL=300        # herda SYNC_INTERVAL quando omitido
+      # Validacao viva de credenciais: pergunta ao provedor se a chave ainda e
+      # aceita, em vez de assumir que uma conexao esta saudavel por carregar uma
+      # credencial. Anunciadas no .env.example e lidas pelo Settings, faltava
+      # repassa-las ao container.
+      - CREDENTIAL_CHECK_ENABLED=${CREDENTIAL_CHECK_ENABLED:-1}
+      - CREDENTIAL_CHECK_TIMEOUT=${CREDENTIAL_CHECK_TIMEOUT:-8}
+      - LOG_DIR=${LOG_DIR:-/app/data/logs}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      - omniroute
+      omniroute:
+        # Esperar o gateway ficar saudavel, e nao apenas iniciado: o OmniRoute
+        # cria o storage.sqlite durante o proprio boot, e subir antes disso faz
+        # o primeiro ciclo encontrar o banco ausente.
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   omniroute_data:
+  ominirtksync_logs:

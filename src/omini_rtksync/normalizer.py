@@ -1,11 +1,11 @@
-"""Date normalization and self-healing engine for OmniRoute."""
+"""Normalização de datas e auto-cura para OmniRoute."""
 
 from datetime import datetime
 from typing import Any, Optional
 
 
 def parse_expiry_to_ms(val: Any) -> Optional[int]:
-    """Convert various expiration formats (ISO string, numeric string, int) to epoch milliseconds."""
+    """Converte valores variados (string ISO, string numérica, int) em epoch milissegundos."""
     if val is None:
         return None
     if isinstance(val, (int, float)):
@@ -31,4 +31,3 @@ def parse_expiry_to_ms(val: Any) -> Optional[int]:
         except Exception:
             pass
     return None
-
