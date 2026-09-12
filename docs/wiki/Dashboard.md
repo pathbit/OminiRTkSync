@@ -113,7 +113,7 @@ Kept for automation; the dashboard itself does not use them.
 
 | Endpoint | Method | Purpose |
 | :--- | :--- | :--- |
-| `/healthz` | GET | Unauthenticated liveness probe. `OK`, `DATABASE_NOT_READY` or `OMNIROUTE_SERVICE_UNREACHABLE`. |
+| `/healthz` | GET | Unauthenticated liveness probe. `OK`, `DATABASE_NOT_READY` or `GATEWAY_SERVICE_UNREACHABLE`. |
 | `/api/status` | GET | Full state as JSON. |
 | `/api/cron-status` | GET | Scheduler state and history. |
 | `/api/sync` | POST | Trigger a synchronization pass. |
