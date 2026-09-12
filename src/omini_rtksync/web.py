@@ -628,7 +628,13 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         if route == "/acoes/idioma":
             fields = parse_qs(raw_body.decode("utf-8", errors="replace"))
             chosen = normalize_language((fields.get("lang", [""])[0] or "").strip())
-            set_preference(self.prefs_path(), "language", chosen)
+            # Gravar pode falhar -- disco cheio, arquivo sem permissao de escrita.
+            # Redirecionar com sucesso nesse caso deixava o usuario clicando na
+            # bandeira sem entender por que a tela volta no idioma anterior: o
+            # painel dizia "pronto" e nada acontecia.
+            if not set_preference(self.prefs_path(), "language", chosen):
+                self.redirect_to_dashboard("danger", translate("language.save_failed", chosen))
+                return
             self.send_response(HTTPStatus.SEE_OTHER)
             self.send_header("Location", "/")
             self.send_header("Content-Length", "0")

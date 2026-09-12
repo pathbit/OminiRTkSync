@@ -161,7 +161,9 @@ class TestDashboardMarkup(unittest.TestCase):
     def test_refresh_controls_are_present(self):
         page = self._page()
         self.assertIn('action="/acoes/atualizar"', page)     # botão Atualizar
-        self.assertIn('action="/acoes/sincronizar"', page)   # Sincronizar agora
+        # Sincronizar dispara pelo agendador, para que a execucao manual
+        # apareca no historico junto com as automaticas.
+        self.assertIn('action="/acoes/cron"', page)   # Sincronizar agora
         self.assertIn('action="/acoes/cron"', page)          # Executar ciclo
         self.assertIn('action="/acoes/testar-gateway"', page)
 

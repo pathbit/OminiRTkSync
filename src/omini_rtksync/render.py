@@ -293,6 +293,62 @@ def render_security_banner(is_default_password: bool, lang: str) -> str:
       </div>"""
 
 
+
+def render_connection_details(conn: Any, refresh_margin: int, sharing_count: int, lang: str) -> str:
+    """Modal com o que nao cabe na linha da tabela.
+
+    A tabela existe para varrer muitas conexoes de relance; o diagnostico e uma
+    frase inteira, e espremido entre sete colunas ele sobrepunha a coluna
+    vizinha. Aqui ele aparece por extenso, junto do resto do estado daquela
+    conexao, sem competir com nada.
+    """
+    linhas = [
+        (translate("table.provider", lang), f'<span class="provider-chip">{esc(conn.provider)}</span>'),
+        (translate("table.status", lang), health_badge(conn.health_status, lang)),
+        (translate("table.remaining", lang), render_remaining(conn, lang)),
+        (translate("table.last_refresh", lang), render_last_refresh(conn, lang)),
+    ]
+    if conn.is_local and conn.base_url:
+        linhas.append((translate("table.type", lang),
+                       f'<span class="font-monospace">{esc(conn.base_url)}</span>'))
+    if not conn.is_local:
+        chip = egress_chip(conn, sharing_count, lang)
+        if chip:
+            linhas.append((translate("egress.title", lang), chip))
+
+    corpo = "".join(
+        f'<dt class="col-5 text-secondary fw-normal">{esc(rotulo)}</dt>'
+        f'<dd class="col-7 text-end">{valor}</dd>'
+        for rotulo, valor in linhas
+    )
+    modelos = ""
+    if conn.is_local and conn.local_models:
+        itens = "".join(f'<li class="font-monospace small">{esc(m)}</li>' for m in conn.local_models)
+        modelos = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.models", lang))}</p>'
+                   f'<ul class="mb-0">{itens}</ul>')
+
+    return f"""
+  <div class="modal fade" id="detalhe-{esc(conn.id)}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
+            <i class="bi bi-info-circle" aria-hidden="true"></i>{esc(conn.name)}
+          </h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"
+                  aria-label="{esc(translate("action.close", lang))}"></button>
+        </div>
+        <div class="modal-body">
+          <dl class="row mb-0 small">{corpo}</dl>
+          <p class="text-secondary small mb-1 mt-3">{esc(translate("table.diagnosis", lang))}</p>
+          <p class="mb-0">{esc(render_refresh_reason(conn, refresh_margin, lang))}</p>
+          {modelos}
+        </div>
+      </div>
+    </div>
+  </div>"""
+
+
 def render_connections_table(connections: List[Any], refresh_margin: int, lang: str) -> str:
     if not connections:
         return f"""
@@ -309,6 +365,7 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
     )
 
     rows = []
+    detalhes = []
     for c in connections:
         if c.is_local:
             kind, kind_icon = translate("type.local", lang), "bi-hdd-network"
@@ -352,8 +409,15 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
               <td>{health_badge(c.health_status, lang)}</td>
               <td class="text-nowrap">{render_remaining(c, lang)}</td>
               <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
-              <td class="small text-secondary diagnostico">{esc(render_refresh_reason(c, refresh_margin, lang))}</td>
+              <td class="text-end">
+                <button class="btn btn-outline-light btn-sm py-0 px-2" type="button"
+                        data-bs-toggle="modal" data-bs-target="#detalhe-{esc(c.id)}"
+                        title="{esc(translate("table.details", lang))}">
+                  <i class="bi bi-info-circle" aria-hidden="true"></i>
+                </button>
+              </td>
             </tr>""")
+        detalhes.append(render_connection_details(c, refresh_margin, compartilhando, lang))
 
     return f"""
         <div class="table-responsive">
@@ -361,7 +425,7 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
             <colgroup>
               <col class="c-provedor"><col class="c-nome"><col class="c-tipo">
               <col class="c-status"><col class="c-validade"><col class="c-renovacao">
-              <col class="c-diagnostico">
+              <col class="c-detalhe">
             </colgroup>
             <thead>
               <tr>
@@ -371,13 +435,14 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
                 <th scope="col">{esc(translate("table.status", lang))}</th>
                 <th scope="col">{esc(translate("table.remaining", lang))}</th>
                 <th scope="col">{esc(translate("table.last_refresh", lang))}</th>
-                <th scope="col">{esc(translate("table.diagnosis", lang))}</th>
+                <th scope="col" class="text-end">{esc(translate("table.details", lang))}</th>
               </tr>
             </thead>
             <tbody>{"".join(rows)}
             </tbody>
           </table>
-        </div>"""
+        </div>
+{"".join(detalhes)}"""
 
 
 def render_combos_table(combos: List[Dict[str, Any]], lang: str) -> str:
@@ -486,11 +551,6 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
               <i class="bi bi-list-columns-reverse me-1" aria-hidden="true"></i>Logs
               {'<span class="badge text-bg-danger ms-1">!</span>' if failed else ""}
             </button>
-            <form method="post" action="/acoes/cron" class="m-0">
-              <button class="btn btn-success btn-sm" type="submit">
-                <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{esc(translate("action.run_now", lang))}
-              </button>
-            </form>
           </div>
         </div>
         <div class="card-body">
@@ -670,7 +730,7 @@ def render_dashboard(
       --brand-a:   #7a2fd6;   /* marca, inicio do gradiente */
       --brand-b:   #b57bff;   /* marca, fim do gradiente */
       --text:      #e6e8ee;
-      --text-dim:  #97a0b5;
+      --text-dim:  #b9a6d4;
     }}
     body {{ background: var(--bg); color: var(--text); }}
     .card {{ background: var(--surface); border: 1px solid var(--line); }}
@@ -699,7 +759,7 @@ def render_dashboard(
     .btn-primary {{ --bs-btn-bg: var(--accent); --bs-btn-border-color: var(--accent);
                     --bs-btn-hover-bg: var(--accent-2); --bs-btn-hover-border-color: var(--accent-2);
                     --bs-btn-active-bg: var(--accent-2); --bs-btn-active-border-color: var(--accent-2);
-                    --bs-btn-color: #0b0d12; --bs-btn-hover-color: #0b0d12; --bs-btn-active-color: #0b0d12; }}
+                    --bs-btn-color: var(--bg); --bs-btn-hover-color: var(--bg); --bs-btn-active-color: var(--bg); }}
     a {{ color: var(--accent-2); }}
     a:hover {{ color: var(--accent); }}
     /* Barra de acoes do cabecalho: todos os controles com a MESMA altura. O
@@ -724,7 +784,7 @@ def render_dashboard(
     .tabela-conexoes col.c-status      {{ width: 6.5rem; }}
     .tabela-conexoes col.c-validade    {{ width: 10rem; }}
     .tabela-conexoes col.c-renovacao   {{ width: 12rem; }}
-    .tabela-conexoes col.c-diagnostico {{ width: 22rem; }}
+    .tabela-conexoes col.c-detalhe     {{ width: 5rem; }}
     /* O nome do provedor e um identificador longo e sem espaco
        (openai-compatible-chat-ollama-local): sem isto ele estoura a coluna ou
        forca a tabela a rolar horizontalmente inteira. */
@@ -765,7 +825,7 @@ def render_dashboard(
         <button class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
           <i class="bi bi-key me-1" aria-hidden="true"></i>{esc(translate("action.access", lang))}
         </button>
-        <form method="post" action="/acoes/sincronizar" class="m-0">
+        <form method="post" action="/acoes/cron" class="m-0">
           <button class="btn btn-primary btn-sm" type="submit">
             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>{esc(translate("action.sync_now", lang))}
           </button>

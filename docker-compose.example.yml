@@ -1,9 +1,12 @@
 name: ominirtksync-stack
 
 services:
-  omniroute:
+  ominirtk-router:
     image: diegosouzapw/omniroute:latest
     container_name: ominirtk-router
+    hostname: ominirtk-router
+    networks:
+      - ominirtksync-net
     restart: unless-stopped
     ports:
       # Porta interna 20128 (padrao do OmniRoute); publicada em 8082 no host.
@@ -15,7 +18,7 @@ services:
       - DATA_DIR=/app/data
       - PORT=20128
       - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_BASE_URL=http://localhost:20128
+      - NEXT_PUBLIC_BASE_URL=http://localhost:8082
       - NODE_ENV=production
       # Sem valor de fallback: um default publicado em arquivo de exemplo vira
       # a senha real de toda implantacao que so copiou e colou. O compose
@@ -42,7 +45,7 @@ services:
       # O primeiro boot roda as migracoes e cria o storage.sqlite; da folga.
       start_period: 40s
 
-  ominirtksync:
+  ominirtk-sync:
     # Mesmo uid do gateway. Os dois compartilham o volume, e este servico
     # cria db/ e logs/ no startup: rodando como root, esses diretorios
     # nasciam com dono root e o omniroute -- que roda como `node` (1000) --
@@ -51,6 +54,9 @@ services:
     user: "1000:1000"
     image: ghcr.io/pathbit/ominirtksync:latest
     container_name: ominirtk-sync
+    hostname: ominirtk-sync
+    networks:
+      - ominirtksync-net
     restart: unless-stopped
     ports:
       # Porta interna 9090 (igual no 9RTKSync); publicada em 9092 no host.
@@ -59,11 +65,11 @@ services:
     volumes:
       - omniroute_data:/app/data
       - ${HOME}:/root/host:ro
-      - ominirtksync_logs:/app/data/logs
+      - ominirtksync_logs:/app/logs
     environment:
       - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
-      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://omniroute:20128}
+      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://ominirtk-router:20128}
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
       - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
@@ -81,11 +87,11 @@ services:
       # repassa-las ao container.
       - CREDENTIAL_CHECK_ENABLED=${CREDENTIAL_CHECK_ENABLED:-1}
       - CREDENTIAL_CHECK_TIMEOUT=${CREDENTIAL_CHECK_TIMEOUT:-8}
-      - LOG_DIR=${LOG_DIR:-/app/data/logs}
+      - LOG_DIR=${LOG_DIR:-/app/logs}
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      omniroute:
+      ominirtk-router:
         # Esperar o gateway ficar saudavel, e nao apenas iniciado: o OmniRoute
         # cria o storage.sqlite durante o proprio boot, e subir antes disso faz
         # o primeiro ciclo encontrar o banco ausente.
@@ -106,3 +112,10 @@ services:
 volumes:
   omniroute_data:
   ominirtksync_logs:
+
+networks:
+  ominirtksync-net:
+    name: ominirtksync-net
+    # Rede propria da stack. Na rede default, duas stacks no mesmo
+    # daemon resolvem o mesmo nome curto e nao da para saber a qual
+    # gateway o sincronizador se conectou.

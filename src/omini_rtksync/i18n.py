@@ -126,11 +126,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "auth.user": "User",
         "auth.new_password": "New password",
         "auth.min_chars": "Minimum of 4 characters.",
-        "auth.env_managed": "Credentials come from <code>DASHBOARD_USER</code>/"
-                            "<code>DASHBOARD_PASSWORD</code>. Change them in the environment "
-                            "and restart the service.",
+        "auth.env_managed": "Credentials for this panel are managed outside it. Change them where the service is configured, then restart it.",
         "footer.signed_in": "Signed in as",
         "footer.generated": "Data rendered on the server at",
+        "language.save_failed": "Could not save the language preference: the panel storage is not writable.",
         "language.label": "Language",
     },
     "pt": {
@@ -240,11 +239,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "auth.user": "Usuário",
         "auth.new_password": "Nova senha",
         "auth.min_chars": "Mínimo de 4 caracteres.",
-        "auth.env_managed": "As credenciais vêm de <code>DASHBOARD_USER</code>/"
-                            "<code>DASHBOARD_PASSWORD</code>. Altere-as no ambiente "
-                            "e reinicie o serviço.",
+        "auth.env_managed": "As credenciais deste painel são gerenciadas fora dele. Altere-as onde o serviço é configurado e reinicie-o.",
         "footer.signed_in": "Autenticado como",
         "footer.generated": "Dados gerados no servidor em",
+        "language.save_failed": "Nao foi possivel gravar o idioma: o armazenamento do painel nao aceita escrita.",
         "language.label": "Idioma",
     },
     "es": {
@@ -354,11 +352,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "auth.user": "Usuario",
         "auth.new_password": "Nueva contraseña",
         "auth.min_chars": "Mínimo de 4 caracteres.",
-        "auth.env_managed": "Las credenciales vienen de <code>DASHBOARD_USER</code>/"
-                            "<code>DASHBOARD_PASSWORD</code>. Cámbielas en el entorno "
-                            "y reinicie el servicio.",
+        "auth.env_managed": "Las credenciales de este panel se gestionan fuera de él. Cámbielas donde se configura el servicio y reinícielo.",
         "footer.signed_in": "Autenticado como",
         "footer.generated": "Datos generados en el servidor a las",
+        "language.save_failed": "No se pudo guardar el idioma: el almacenamiento del panel no acepta escritura.",
         "language.label": "Idioma",
     },
 }
