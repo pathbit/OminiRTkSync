@@ -101,7 +101,12 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
             refresh_token = item.get("refresh_token") or item.get("refreshToken")
             api_key = item.get("api_key") or item.get("apiKey")
             expires_at = item.get("expires_at") or item.get("expiresAt")
-            test_status = item.get("test_status") or item.get("testStatus") or "active"
+            # Sem default: uma coluna vazia significa "ninguém testou", não
+            # "está saudável". Inventar "active" na leitura fazia o valor voltar
+            # ao banco no fim do ciclo, e o sincronizador passava a afirmar ao
+            # gateway uma saúde que nunca mediu — o mesmo defeito de marcar
+            # "invalid" o que não conseguiu ler, só que na direção oposta.
+            test_status = item.get("test_status") or item.get("testStatus")
 
             # Se houver campo JSON 'data' (formato 9Router), funde os campos
             extra: Dict[str, Any] = {}

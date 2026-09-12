@@ -76,3 +76,46 @@ class CredencialCifrada(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SaudeNaoSeInventa(unittest.TestCase):
+    """O espelho do mesmo defeito: afirmar saúde sem ter medido.
+
+    A leitura preenchia `test_status` vazio com "active". Como o fim do ciclo
+    grava de volta o que leu, o sincronizador passava a afirmar ao gateway uma
+    saúde que nunca mediu -- e uma chave ilegível aparecia verde na tela.
+    """
+
+    def _banco_com_uma_conexao_sem_estado(self):
+        import sqlite3
+        import tempfile
+        import os
+
+        caminho = os.path.join(tempfile.mkdtemp(), "storage.sqlite")
+        con = sqlite3.connect(caminho)
+        con.execute(
+            "CREATE TABLE provider_connections ("
+            "id TEXT PRIMARY KEY, provider TEXT, name TEXT, auth_type TEXT,"
+            " api_key TEXT, access_token TEXT, refresh_token TEXT,"
+            " expires_at TEXT, test_status TEXT, last_error TEXT,"
+            " is_active INTEGER, provider_specific_data TEXT)"
+        )
+        con.execute(
+            "INSERT INTO provider_connections VALUES"
+            " ('1','groq','Groq','apikey',?,NULL,NULL,NULL,NULL,NULL,1,'{}')",
+            (CIFRADO,),
+        )
+        con.commit()
+        con.close()
+        return caminho
+
+    def test_coluna_vazia_nao_vira_active(self):
+        from omini_rtksync.database import get_all_connections
+
+        conexoes = get_all_connections(self._banco_com_uma_conexao_sem_estado())
+        self.assertEqual(len(conexoes), 1)
+        self.assertNotEqual(
+            conexoes[0].get("testStatus"),
+            "active",
+            "coluna vazia significa 'ninguém testou', não 'está saudável'",
+        )
