@@ -41,7 +41,7 @@ services:
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
       - WEB_PORT=${WEB_PORT:-9090}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
       # Credencial de emergencia (usuario 'admin' + este valor como senha).
       # Se omitida, e gerada no primeiro boot e registrada no arquivo de log.
       # - DASHBOARD_RECOVERY_HASH=

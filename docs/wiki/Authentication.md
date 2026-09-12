@@ -28,18 +28,32 @@ leak information through response timing.
  stored exists ───►│  only stored credentials │
                    └──────────────────────────┘
                    ┌──────────────────────────┐
- nothing stored ──►│  factory credentials     │
+ nothing stored ──►│  recovery credential     │
                    └──────────────────────────┘
 ```
 
 ---
 
-## Factory credentials
+## First sign-in
 
-`admin` / `pathbit`, overridable with `DASHBOARD_USER` and `DASHBOARD_PASSWORD`.
+**There is no factory password.** A static default is a public credential: it ships in the
+README, gets copied into every deployment, and is the first thing anyone tries. So the panel
+has none.
 
-While the password is still `pathbit`, the dashboard shows a security banner. Change it — the
-panel reaches your gateway's credential store.
+On first boot a random recovery credential is generated, written to
+`<DB_PATH dir>/.dashboard_recovery` with mode `0600`, and **never printed to the log** — the
+container's stdout is routinely collected, forwarded and read by many people. Read it once:
+
+```bash
+docker exec <container> cat /app/data/db/.dashboard_recovery
+```
+
+Sign in with user `admin` and that value, then set your own password on the screen. Until you
+do, the dashboard shows a security banner.
+
+To skip this entirely, set `DASHBOARD_USER` and `DASHBOARD_PASSWORD` in the environment
+(see [Headless mode](#headless-mode)), or pin your own recovery value with
+`DASHBOARD_RECOVERY_HASH`.
 
 ---
 

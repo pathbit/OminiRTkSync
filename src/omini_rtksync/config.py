@@ -50,7 +50,10 @@ class Settings:
     web_port: int = 9090
     credential_paths: List[str] = None
     dashboard_user: str = "admin"
-    dashboard_password: str = "pathbit"
+    # Sem senha de fabrica: um valor estatico e, por definicao, uma credencial
+    # publica. O primeiro acesso e feito com a credencial de recuperacao, que e
+    # sorteada no primeiro boot e gravada com modo 0600.
+    dashboard_password: str = ""
     cron_interval: int = 300
     cron_enabled: bool = True
     # Validação viva das credenciais: pergunta ao provedor se a chave ainda é
@@ -219,7 +222,7 @@ class Settings:
         env_user = os.environ.get("DASHBOARD_USER")
         env_pass = os.environ.get("DASHBOARD_PASSWORD")
         d_user = env_user or "admin"
-        d_pass = env_pass or "pathbit"
+        d_pass = env_pass or ""
         auth_from_env = bool(env_user or env_pass)
 
         sync_int = int(os.environ.get("SYNC_INTERVAL", "300"))

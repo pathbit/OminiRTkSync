@@ -88,7 +88,7 @@ services:
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
       - WEB_PORT=${WEB_PORT:-9090}
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-pathbit}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
     depends_on:
       - omniroute
     healthcheck:
@@ -159,7 +159,7 @@ OminiRTKSync --daemon --db-path /caminho/para/storage.sqlite
 | `WEB_PORT` | `9090` | Porta do dashboard web HTTP |
 | `WEB_HOST` | `0.0.0.0` | Interface de rede para o servidor web |
 | `DASHBOARD_USER` | `admin` | Usuário de autenticação HTTP Basic Auth |
-| `DASHBOARD_PASSWORD` | `pathbit` | Senha padrão inicial de autenticação HTTP Basic Auth |
+| `DASHBOARD_PASSWORD` | *(vazio)* | Senha do painel. Vazia, o primeiro acesso usa a credencial de recuperação gerada no primeiro boot. |
 | `ANTIGRAVITY_TOKEN_PATH` | auto | Caminho customizado para arquivo de token do Antigravity |
 
 ---

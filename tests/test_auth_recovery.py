@@ -155,11 +155,17 @@ class TestSettingsAuthIntegration(unittest.TestCase):
         with mock.patch.dict(os.environ, base, clear=True):
             return Settings.from_env(env_file=""), dict(base)
 
-    def test_full_lifecycle_from_factory_to_change_to_recovery(self):
+    def test_full_lifecycle_from_first_boot_to_change_to_recovery(self):
         settings, base = self._settings()
         with mock.patch.dict(os.environ, base, clear=True):
-            # 1. Primeiro acesso: credenciais de fábrica.
-            self.assertTrue(settings.verify_credentials("admin", "pathbit"))
+            # 1. Primeiro acesso. Nao existe senha de fabrica: um valor estatico
+            # seria, por definicao, uma credencial publica. Quem abre a porta e a
+            # credencial sorteada no primeiro boot.
+            recovery, generated_now = settings.ensure_recovery_hash()
+            self.assertTrue(generated_now)
+            self.assertFalse(settings.verify_credentials("admin", "pathbit"))
+            self.assertFalse(settings.verify_credentials("admin", ""))
+            self.assertTrue(settings.verify_credentials("admin", recovery))
 
             # 2. Operador troca a senha pela tela.
             self.assertTrue(settings.update_auth_credentials("operador", "Minha-Senha1"))

@@ -112,5 +112,33 @@ class TestCredentialsInSqlite(unittest.TestCase):
         self.assertTrue(password_matches(stored, "Pathbit1!"))
 
 
+class TestNoFactoryPassword(unittest.TestCase):
+    """Uma senha padrao estatica e, por definicao, uma credencial publica."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db_path = os.path.join(self.tmp.name, "data.sqlite")
+
+    def test_the_settings_default_carries_no_password(self):
+        self.assertEqual(Settings(db_path=self.db_path).dashboard_password, "")
+
+    def test_no_guessable_password_opens_the_panel(self):
+        s = Settings(db_path=self.db_path)
+        s.ensure_recovery_hash()
+        for guess in ("pathbit", "admin", "", "password", "123456", "9rtksync"):
+            self.assertFalse(s.verify_credentials("admin", guess), guess)
+
+    def test_the_recovery_credential_is_the_only_way_in_before_a_password_is_set(self):
+        s = Settings(db_path=self.db_path)
+        recovery, _ = s.ensure_recovery_hash()
+        self.assertTrue(s.verify_credentials("admin", recovery))
+
+    def test_the_recovery_credential_is_long_enough_to_resist_guessing(self):
+        s = Settings(db_path=self.db_path)
+        recovery, _ = s.ensure_recovery_hash()
+        self.assertGreaterEqual(len(recovery), 32)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,9 +36,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.api_keys": "API keys",
         "metric.combos": "Registered combos",
         "security.title": "Security warning:",
-        "security.body": "no password has been set for this dashboard yet, so it is still "
-                         "accepting the factory credentials. Set one now, or define "
-                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> in the environment.",
+        "security.body": "no password has been set for this dashboard yet, so access still "
+                         "depends on the one-time recovery credential. Set your own now, or "
+                         "define <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> in the environment.",
+        "auth.updated_title": "Credentials updated",
+        "auth.updated_body": "Your new password is now in effect. The browser is still holding the "
+                             "previous one, so sign in again to continue.",
+        "auth.updated_link": "Back to the dashboard",
+        "auth.required": "Authentication required.",
+        "auth.required_body": "This dashboard is private. Sign in to continue.",
         "gateway.title": "Gateway connection",
         "gateway.gateway": "Gateway",
         "gateway.status": "Status",
@@ -139,9 +145,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.api_keys": "Chaves de API",
         "metric.combos": "Combos registrados",
         "security.title": "Atenção de segurança:",
-        "security.body": "nenhuma senha foi definida para este painel ainda, então ele "
-                         "continua aceitando as credenciais de fábrica. Defina uma agora, ou "
+        "security.body": "nenhuma senha foi definida para este painel ainda, então o acesso "
+                         "ainda depende da credencial de recuperação. Defina a sua agora, ou "
                          "configure <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> no ambiente.",
+        "auth.updated_title": "Credenciais atualizadas",
+        "auth.updated_body": "A nova senha já está em vigor. O navegador ainda guarda a anterior, "
+                             "então autentique-se de novo para continuar.",
+        "auth.updated_link": "Voltar ao painel",
+        "auth.required": "Autenticação requerida.",
+        "auth.required_body": "Este painel é privado. Autentique-se para continuar.",
         "gateway.title": "Conexão com o gateway",
         "gateway.gateway": "Gateway",
         "gateway.status": "Status",
@@ -243,8 +255,14 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.combos": "Combos registrados",
         "security.title": "Aviso de seguridad:",
         "security.body": "todavía no se ha definido una contraseña para este panel, por lo que "
-                         "sigue aceptando las credenciales de fábrica. Defina una ahora, o "
-                         "configure <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> en el entorno.",
+                         "el acceso aún depende de la credencial de recuperación. Defina la suya "
+                         "ahora, o configure <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> en el entorno.",
+        "auth.updated_title": "Credenciales actualizadas",
+        "auth.updated_body": "La nueva contraseña ya está vigente. El navegador todavía guarda la "
+                             "anterior, así que vuelva a autenticarse para continuar.",
+        "auth.updated_link": "Volver al panel",
+        "auth.required": "Autenticación requerida.",
+        "auth.required_body": "Este panel es privado. Autentíquese para continuar.",
         "gateway.title": "Conexión con el gateway",
         "gateway.gateway": "Gateway",
         "gateway.status": "Estado",

@@ -149,6 +149,39 @@ def render_remaining(conn: Any, lang: str) -> str:
     return f'<span class="text-secondary">{esc(translate("duration.no_expiry", lang))}</span>'
 
 
+def render_notice_page(title: str, body: str, link_label: str = "") -> bytes:
+    """Pagina autonoma para respostas fora do painel autenticado.
+
+    E o que o navegador exibe quando o usuario aperta ESC no dialogo do Basic
+    Auth, entao nao pode conter nem credencial nem dica de credencial.
+    """
+    link = (
+        f'<p><a href="/">{esc(link_label)}</a></p>' if link_label else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{esc(title)}</title>
+  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
+  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
+  <style>body {{ background: #0b0d12; }}</style>
+</head>
+<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
+  <div class="card text-center" style="max-width:34rem">
+    <div class="card-body p-4">
+      <i class="bi bi-shield-lock fs-1 text-secondary d-block mb-3" aria-hidden="true"></i>
+      <h1 class="h5 mb-3">{esc(title)}</h1>
+      <p class="text-secondary mb-3">{esc(body)}</p>
+      {link}
+    </div>
+  </div>
+</body>
+</html>""".encode("utf-8")
+
+
 def health_badge(status: str, lang: str) -> str:
     """Monta o badge de saúde com ícone de fonte."""
     css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])

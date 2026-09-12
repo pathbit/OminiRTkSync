@@ -64,7 +64,7 @@ out and produce `BrokenPipeError` in the logs.
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `DASHBOARD_USER` | `admin` | Panel user. |
-| `DASHBOARD_PASSWORD` | `pathbit` | Panel password. **Change it.** |
+| `DASHBOARD_PASSWORD` | *(empty)* | Panel password. Left empty, the first sign-in uses the recovery credential generated on first boot. |
 | `DASHBOARD_RECOVERY_HASH` | generated | Break-glass credential: sign in as `admin` with this value as the password. When unset, a random value is generated on first boot, stored with mode `0600` and written once to the log. |
 
 **Headless mode.** Setting `DASHBOARD_USER` and/or `DASHBOARD_PASSWORD` makes the environment the

@@ -1,29 +1,68 @@
-name: Purge Packages
+name: Package Retention
+
+# Mantem o registro enxuto sem nunca derrubar o que esta em uso.
+#
+# A versao anterior deste arquivo nao era limpeza: com min-versions-to-keep: 0
+# e delete-only-untagged-versions: false ela apagava TODAS as versoes e em
+# seguida removia o proprio package via API. Quem tivesse um container puxando
+# ghcr.io/pathbit/ominirtksync:latest ficava sem imagem para reiniciar.
+#
+# Politica atual: guarda as 3 versoes marcadas mais recentes e descarta as
+# camadas orfas que cada build multi-arch deixa para tras.
 
 on:
   workflow_dispatch:
+    inputs:
+      keep:
+        description: "Quantas versoes marcadas manter"
+        required: false
+        default: "3"
+  schedule:
+    # Semanal, domingo 04:00 UTC: o acumulo vem dos builds, nao do relogio.
+    - cron: "0 4 * * 0"
+  workflow_run:
+    workflows: ["Release and Docker Package"]
+    types: [completed]
 
 permissions:
   packages: write
 
+concurrency:
+  group: package-retention-ominirtksync
+  cancel-in-progress: false
+
 jobs:
-  purge:
+  retention:
+    name: Apply retention policy
     runs-on: ubuntu-latest
+    # Depois de um release, so faz sentido limpar se o release funcionou.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
-      - name: Purge package versions
+      - name: Discard untagged versions
         uses: actions/delete-package-versions@v5
         with:
-          package-name: 'ominirtksync'
-          package-type: 'container'
+          package-name: "ominirtksync"
+          package-type: container
+          delete-only-untagged-versions: "true"
           min-versions-to-keep: 0
-          delete-only-untagged-versions: 'false'
-        continue-on-error: true
 
-      - name: Force delete package via GitHub API
+      - name: Keep only the most recent tagged versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: "ominirtksync"
+          package-type: container
+          min-versions-to-keep: ${{ github.event.inputs.keep || '3' }}
+          # "latest" nunca entra na conta de descarte: e a tag que os
+          # docker-compose em producao resolvem.
+          ignore-versions-with-tags: "latest"
+
+      - name: Report what survived
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -X DELETE \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/orgs/pathbit/packages/container/ominirtksync || true
+          echo "### Versoes mantidas em ominirtksync" >> "$GITHUB_STEP_SUMMARY"
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/ominirtksync/versions" \
+            --jq '.[] | "- \(.name[0:19])  tags: \(.metadata.container.tags | join(", "))"' \
+            >> "$GITHUB_STEP_SUMMARY" || echo "- (nao foi possivel listar)" >> "$GITHUB_STEP_SUMMARY"
