@@ -269,14 +269,18 @@ def main():
     # Log em arquivo precisa existir antes de qualquer evento do motor de sincronizacao.
     logger = setup_logging(settings.db_path)
 
-    # Credencial de emergencia: gerada uma unica vez e registrada no log, para o
-    # operador conseguir voltar ao painel caso esqueca a senha trocada pela tela.
+    # Credencial de emergencia: gerada uma unica vez, para o operador conseguir
+    # voltar ao painel caso esqueca a senha trocada pela tela.
+    #
+    # O valor NAO vai para o log. Ele e uma credencial funcional, e o stdout do
+    # container costuma ser coletado, encaminhado e lido por muita gente; fica
+    # apenas no arquivo com modo 0600, e o log diz onde encontra-lo.
     recovery_hash, generated_now = settings.ensure_recovery_hash()
     if generated_now and recovery_hash:
         logger.warning(
-            "[AUTH] Hash de recuperacao gerado. Para recuperar o acesso use usuario "
-            "'admin' e esta senha: %s (guarde-a; defina DASHBOARD_RECOVERY_HASH para fixar a sua)",
-            recovery_hash,
+            "[AUTH] Credencial de recuperacao gerada para o usuario 'admin'. Leia com: "
+            "docker exec <container> cat %s  (ou fixe a sua com DASHBOARD_RECOVERY_HASH)",
+            settings.get_recovery_file_path(),
         )
 
     if args.db_path:

@@ -62,6 +62,26 @@ class TestHealthzResilience(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             self.assertEqual(resp.read(), b"OK")
 
+    def test_healthz_sends_exactly_one_well_formed_response(self):
+        """O teste anterior so olhava corpo e status, e por isso passava enquanto o
+        servidor levantava NameError depois de escrever a resposta: o cliente ja
+        tinha recebido tudo. Content-Length prova que houve uma unica resposta
+        completa, montada antes de qualquer escrita."""
+        with urllib.request.urlopen(f"http://127.0.0.1:{19391}/healthz", timeout=5) as resp:
+            body = resp.read()
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(body, b"OK")
+            self.assertEqual(int(resp.headers["Content-Length"]), len(body))
+            self.assertEqual(resp.headers["Cache-Control"], "no-store")
+
+    def test_healthz_does_not_raise_inside_the_handler(self):
+        """Uma excecao apos a resposta nao aparece para o cliente, so no log do
+        container. Sondar duas vezes garante que o handler termina inteiro."""
+        for _ in range(2):
+            with urllib.request.urlopen(f"http://127.0.0.1:{19391}/healthz", timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+        self.assertTrue(self.server.socket.fileno() > 0)
+
     def test_client_disconnect_does_not_crash_the_server(self):
         """O probe do Docker fecha o socket cedo; isso não pode virar traceback nem derrubar o servidor."""
         for _ in range(5):

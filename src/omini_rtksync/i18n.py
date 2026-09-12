@@ -36,8 +36,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.api_keys": "API keys",
         "metric.combos": "Registered combos",
         "security.title": "Security warning:",
-        "security.body": "the dashboard still uses the factory default credentials "
-                         "(<code>admin / pathbit</code>). Change the password or set "
+        "security.body": "no password has been set for this dashboard yet, so it is still "
+                         "accepting the factory credentials. Set one now, or define "
                          "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> in the environment.",
         "gateway.title": "Gateway connection",
         "gateway.gateway": "Gateway",
@@ -91,6 +91,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "credential.checked_at": "Checked at",
         "credential.never": "Never validated",
         "action.validate": "Validate credentials",
+        "duration.unknown_expiry": "Expiry unknown",
+        "duration.no_expiry": "No expiry (static key)",
+        "table.last_refresh": "Last renewal",
+        "table.never_refreshed": "Never renewed",
+        "table.time_ago": "{elapsed} ago",
+        "security.cross_origin": "Request rejected: it did not come from this dashboard. Reload the page and try again.",
         "action.refreshed": "Page reloaded with fresh data.",
         "password.policy": "At least 6 characters, with uppercase, lowercase, a number and a special character.",
         "password.too_short": "Password must have at least 6 characters.",
@@ -133,9 +139,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.api_keys": "Chaves de API",
         "metric.combos": "Combos registrados",
         "security.title": "Atenção de segurança:",
-        "security.body": "o painel ainda usa as credenciais padrão de fábrica "
-                         "(<code>admin / pathbit</code>). Altere a senha ou defina "
-                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> no ambiente.",
+        "security.body": "nenhuma senha foi definida para este painel ainda, então ele "
+                         "continua aceitando as credenciais de fábrica. Defina uma agora, ou "
+                         "configure <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> no ambiente.",
         "gateway.title": "Conexão com o gateway",
         "gateway.gateway": "Gateway",
         "gateway.status": "Status",
@@ -188,6 +194,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "credential.checked_at": "Verificada em",
         "credential.never": "Nunca validada",
         "action.validate": "Validar credenciais",
+        "duration.unknown_expiry": "Validade desconhecida",
+        "duration.no_expiry": "Sem expiração (chave estática)",
+        "table.last_refresh": "Última renovação",
+        "table.never_refreshed": "Nunca renovada",
+        "table.time_ago": "há {elapsed}",
+        "security.cross_origin": "Requisição recusada: ela não veio deste painel. Recarregue a página e tente de novo.",
         "action.refreshed": "Página recarregada com dados atualizados.",
         "password.policy": "Mínimo de 6 caracteres, com maiúscula, minúscula, número e caractere especial.",
         "password.too_short": "A senha precisa ter ao menos 6 caracteres.",
@@ -230,9 +242,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "metric.api_keys": "Claves de API",
         "metric.combos": "Combos registrados",
         "security.title": "Aviso de seguridad:",
-        "security.body": "el panel todavía usa las credenciales de fábrica "
-                         "(<code>admin / pathbit</code>). Cambie la contraseña o defina "
-                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> en el entorno.",
+        "security.body": "todavía no se ha definido una contraseña para este panel, por lo que "
+                         "sigue aceptando las credenciales de fábrica. Defina una ahora, o "
+                         "configure <code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> en el entorno.",
         "gateway.title": "Conexión con el gateway",
         "gateway.gateway": "Gateway",
         "gateway.status": "Estado",
@@ -285,6 +297,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "credential.checked_at": "Verificada el",
         "credential.never": "Nunca validada",
         "action.validate": "Validar credenciales",
+        "duration.unknown_expiry": "Validez desconocida",
+        "duration.no_expiry": "Sin expiración (clave estática)",
+        "table.last_refresh": "Última renovación",
+        "table.never_refreshed": "Nunca renovada",
+        "table.time_ago": "hace {elapsed}",
+        "security.cross_origin": "Solicitud rechazada: no provino de este panel. Recargue la página e inténtelo de nuevo.",
         "action.refreshed": "Página recargada con datos actualizados.",
         "password.policy": "Mínimo de 6 caracteres, con mayúscula, minúscula, número y carácter especial.",
         "password.too_short": "La contraseña necesita al menos 6 caracteres.",

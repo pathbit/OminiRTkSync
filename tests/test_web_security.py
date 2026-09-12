@@ -10,6 +10,14 @@ import unittest
 import urllib.error
 import urllib.request
 
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Nao segue o 303: o teste precisa ver a resposta, nao o destino."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 from omini_rtksync.config import Settings
 from omini_rtksync import web as web_server
 
@@ -70,56 +78,78 @@ class TestWebSecurity(unittest.TestCase):
         return {"Authorization": f"Basic {raw}"}
 
     def post(self, path, headers=None, body=b"idioma=pt"):
+        """Dispara o POST sem seguir o redirecionamento, para inspecionar a resposta."""
         req = urllib.request.Request(f"{BASE}{path}", data=body, method="POST")
         for key, value in self.auth_header().items():
             req.add_header(key, value)
         for key, value in (headers or {}).items():
             req.add_header(key, value)
+
+        opener = urllib.request.build_opener(NoRedirect)
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                return resp.status
+            with opener.open(req, timeout=5) as resp:
+                return resp.status, resp.headers.get("Location", "")
         except urllib.error.HTTPError as e:
-            return e.code
+            return e.code, e.headers.get("Location", "")
+
+    def assertRejected(self, result):
+        """A recusa devolve o usuario ao painel com o aviso, nao uma pagina de erro crua."""
+        status, location = result
+        self.assertEqual(status, 303)
+        self.assertIn("tom=danger", location)
+
+    def assertAccepted(self, result):
+        status, _ = result
+        self.assertEqual(status, 303)
 
     # --- CSRF ---------------------------------------------------------------
 
     def test_cross_site_post_is_rejected(self):
         """O Basic Auth vai junto num POST de outro site; sem esta barreira daria para
         trocar a senha do painel a partir de uma pagina maliciosa."""
-        status = self.post("/acoes/idioma", {"Sec-Fetch-Site": "cross-site"})
-        self.assertEqual(status, 403)
+        self.assertRejected(self.post("/acoes/idioma", {"Sec-Fetch-Site": "cross-site"}))
 
     def test_same_site_post_is_rejected(self):
         """Subdominio tambem e outra origem."""
-        status = self.post("/acoes/idioma", {"Sec-Fetch-Site": "same-site"})
-        self.assertEqual(status, 403)
+        self.assertRejected(self.post("/acoes/idioma", {"Sec-Fetch-Site": "same-site"}))
 
     def test_cross_origin_by_origin_header_is_rejected(self):
         """Navegador antigo, sem Sec-Fetch-Site: cai na comparacao de Origin com Host."""
-        status = self.post("/acoes/idioma", {"Origin": "http://site-malicioso.example"})
-        self.assertEqual(status, 403)
+        self.assertRejected(self.post("/acoes/idioma", {"Origin": "http://site-malicioso.example"}))
 
     def test_same_origin_post_is_accepted(self):
-        status = self.post("/acoes/idioma", {"Sec-Fetch-Site": "same-origin"})
-        self.assertNotEqual(status, 403)
+        self.assertAccepted(self.post("/acoes/idioma", {"Sec-Fetch-Site": "same-origin"}))
 
     def test_direct_navigation_is_accepted(self):
         """Sec-Fetch-Site: none e a navegacao digitada na barra de enderecos."""
-        status = self.post("/acoes/idioma", {"Sec-Fetch-Site": "none"})
-        self.assertNotEqual(status, 403)
+        self.assertAccepted(self.post("/acoes/idioma", {"Sec-Fetch-Site": "none"}))
 
     def test_matching_origin_is_accepted(self):
-        status = self.post("/acoes/idioma", {"Origin": BASE})
-        self.assertNotEqual(status, 403)
+        self.assertAccepted(self.post("/acoes/idioma", {"Origin": BASE}))
 
     def test_non_browser_client_is_accepted(self):
         """curl e scripts nao mandam nenhum dos dois cabecalhos e nao tem sessao a sequestrar."""
-        status = self.post("/acoes/idioma")
-        self.assertNotEqual(status, 403)
+        self.assertAccepted(self.post("/acoes/idioma"))
 
     def test_csrf_guard_also_covers_the_json_endpoints(self):
-        status = self.post("/api/change-password", {"Sec-Fetch-Site": "cross-site"}, b"{}")
-        self.assertEqual(status, 403)
+        self.assertRejected(
+            self.post("/api/change-password", {"Sec-Fetch-Site": "cross-site"}, b"{}")
+        )
+
+    def test_a_mismatched_origin_wins_over_a_friendly_fetch_site(self):
+        """O Origin e a evidencia forte: checar Sec-Fetch-Site antes dele fazia um
+        valor inesperado do navegador recusar um POST legitimo do proprio painel."""
+        self.assertRejected(
+            self.post(
+                "/acoes/idioma",
+                {"Origin": "http://site-malicioso.example", "Sec-Fetch-Site": "same-origin"},
+            )
+        )
+
+    def test_a_matching_origin_wins_over_an_unexpected_fetch_site(self):
+        self.assertAccepted(
+            self.post("/acoes/idioma", {"Origin": BASE, "Sec-Fetch-Site": "valor-inesperado"})
+        )
 
     # --- Vazamento de segredo ----------------------------------------------
 
@@ -150,6 +180,27 @@ class TestWebSecurity(unittest.TestCase):
 
         for secret in (ACCESS_TOKEN, REFRESH_TOKEN, API_KEY):
             self.assertNotIn(secret, page)
+
+    def test_the_401_body_never_teaches_the_credentials(self):
+        """A resposta de autenticacao nao pode ensinar a senha a quem ainda nao entrou."""
+        try:
+            urllib.request.urlopen(f"{BASE}/", timeout=5)
+            self.fail("deveria exigir autenticacao")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 401)
+            body = e.read().decode("utf-8", errors="replace").lower()
+
+        for leak in ("pathbit", "admin /", "password", "senha"):
+            self.assertNotIn(leak, body)
+
+    def test_no_page_prints_a_live_credential(self):
+        req = urllib.request.Request(BASE + "/")
+        for key, value in self.auth_header().items():
+            req.add_header(key, value)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            page = resp.read().decode("utf-8")
+        # O banner explica que falta senha sem exibir qual e a de fabrica.
+        self.assertNotIn("admin / pathbit", page)
 
 
 if __name__ == "__main__":

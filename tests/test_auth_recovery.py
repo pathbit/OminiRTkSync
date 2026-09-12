@@ -4,7 +4,11 @@ import json
 import os
 import stat
 import tempfile
+import pathlib
 import unittest
+
+from omini_rtksync.cli import *  # noqa
+from omini_rtksync import cli as omini_rtksync_cli
 from unittest import mock
 
 from omini_rtksync.auth import (
@@ -187,3 +191,15 @@ class TestSettingsAuthIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRecoveryHashIsNeverLogged(unittest.TestCase):
+    """O stdout do container e coletado e encaminhado: credencial funcional nao vai para la."""
+
+    def test_the_startup_log_does_not_print_the_hash(self):
+        source = pathlib.Path(omini_rtksync_cli.__file__).read_text(encoding="utf-8")
+        block = source[source.index("ensure_recovery_hash()"):]
+        block = block[: block.index("if args.db_path")]
+        # A chamada de log pode citar o caminho do arquivo, nunca o valor.
+        self.assertNotIn("recovery_hash,", block.split("logger.warning")[1])
+        self.assertIn("get_recovery_file_path()", block)

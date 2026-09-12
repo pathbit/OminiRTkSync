@@ -106,6 +106,49 @@ def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LA
     )
 
 
+def render_last_refresh(conn: Any, lang: str) -> str:
+    """Mostra quando a credencial foi renovada pela ultima vez, e ha quanto tempo."""
+    stamp = conn.last_refresh_at
+    if not stamp:
+        return f'<span class="text-secondary">{esc(translate("table.never_refreshed", lang))}</span>'
+
+    ago = ""
+    try:
+        moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        elapsed = int((datetime.now(timezone.utc) - moment).total_seconds())
+        if elapsed >= 0:
+            ago = translate("table.time_ago", lang, elapsed=format_duration(elapsed, lang))
+    except (ValueError, TypeError):
+        pass
+
+    icon = '<i class="bi bi-arrow-repeat me-1 text-success" aria-hidden="true"></i>'
+    detail = f'<div class="text-secondary">{esc(ago)}</div>' if ago else ""
+    return f'{icon}<span class="font-monospace">{esc(format_timestamp(stamp))}</span>{detail}'
+
+
+def render_remaining(conn: Any, lang: str) -> str:
+    """Validade restante, sem chamar de ilimitado o que so esta faltando.
+
+    Um token OAuth sempre expira. Quando nao ha expiresAt legivel, isso e dado
+    ausente -- normalmente porque o gateway gravou a validade num formato que
+    nao soube reler -- e nao uma credencial eterna. So chave estatica pode ser
+    apresentada como sem expiracao.
+    """
+    remaining = conn.remaining_seconds
+    if remaining is not None:
+        return esc(format_duration(remaining, lang))
+
+    if conn.is_oauth:
+        return (
+            '<span class="text-warning d-inline-flex align-items-center gap-1">'
+            '<i class="bi bi-exclamation-triangle" aria-hidden="true"></i>'
+            f'{esc(translate("duration.unknown_expiry", lang))}</span>'
+        )
+    return f'<span class="text-secondary">{esc(translate("duration.no_expiry", lang))}</span>'
+
+
 def health_badge(status: str, lang: str) -> str:
     """Monta o badge de saúde com ícone de fonte."""
     css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])
@@ -213,7 +256,8 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
                 <i class="bi {kind_icon} me-1 text-secondary" aria-hidden="true"></i>{esc(kind)}
               </td>
               <td>{health_badge(c.health_status, lang)}</td>
-              <td class="text-nowrap">{esc(format_duration(c.remaining_seconds, lang))}</td>
+              <td class="text-nowrap">{render_remaining(c, lang)}</td>
+              <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
               <td class="small text-secondary">{esc(render_refresh_reason(c, refresh_margin, lang))}</td>
             </tr>""")
 
@@ -227,6 +271,7 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
                 <th scope="col">{esc(translate("table.type", lang))}</th>
                 <th scope="col">{esc(translate("table.status", lang))}</th>
                 <th scope="col">{esc(translate("table.remaining", lang))}</th>
+                <th scope="col">{esc(translate("table.last_refresh", lang))}</th>
                 <th scope="col">{esc(translate("table.diagnosis", lang))}</th>
               </tr>
             </thead>
