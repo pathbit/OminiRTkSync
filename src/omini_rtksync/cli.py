@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from .config import Settings
+from .cron import CronScheduler
 from .database import get_all_combos, get_all_connections, update_connection
 from .discovery import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
@@ -208,6 +209,12 @@ def run_daemon(settings: Settings):
     if not found_any:
         log_msg("DISCOVERY", f"Nenhuma credencial local pré-existente em {engine.discovery.host_home}")
 
+    cron_scheduler = CronScheduler(
+        sync_callback=engine.sync_all,
+        interval_seconds=settings.sync_interval,
+        name="OminiRTKSync-CronScheduler",
+    )
+
     if settings.enable_web:
         try:
             start_omini_web(
@@ -216,21 +223,19 @@ def run_daemon(settings: Settings):
                 settings.db_path,
                 omniroute_url=settings.omniroute_url,
                 sync_callback=engine.sync_all,
+                settings=settings,
+                cron_scheduler=cron_scheduler,
             )
             print(f"🌐 Dashboard Web ativo em: http://{settings.web_host}:{settings.web_port}", flush=True)
         except Exception as e:
             print(f"⚠️ Não foi possível iniciar dashboard web na porta {settings.web_port}: {e}", flush=True)
 
-    engine.sync_all()
+    cron_scheduler.start()
 
     while running:
-        for _ in range(settings.sync_interval):
-            if not running:
-                break
-            time.sleep(1)
-        if running:
-            engine.sync_all()
+        time.sleep(1)
 
+    cron_scheduler.stop()
     print("[*] OminiRTKSync encerrado.", flush=True)
 
 
@@ -247,6 +252,8 @@ def main():
     parser.add_argument("--margin", type=int, help="Margem de renovação em segundos (padrão: 900)")
     parser.add_argument("--no-web", action="store_true", help="Desativa dashboard web")
     parser.add_argument("--port", type=int, help="Porta do dashboard web (padrão: 9191)")
+    parser.add_argument("--user", type=str, help="Usuário para autenticação no dashboard web (padrão: admin)")
+    parser.add_argument("--password", type=str, help="Senha para autenticação no dashboard web (padrão: pathbit)")
 
     args = parser.parse_args()
     settings = Settings.from_env()
@@ -261,6 +268,10 @@ def main():
         settings.enable_web = False
     if args.port:
         settings.web_port = args.port
+    if args.user:
+        settings.dashboard_user = args.user
+    if args.password:
+        settings.dashboard_password = args.password
 
     if args.status:
         print_status(settings)

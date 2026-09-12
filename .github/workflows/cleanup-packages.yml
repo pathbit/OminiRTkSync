@@ -1,0 +1,29 @@
+name: Purge Packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'ominirtksync'
+          package-type: 'container'
+          min-versions-to-keep: 0
+          delete-only-untagged-versions: 'false'
+        continue-on-error: true
+
+      - name: Force delete package via GitHub API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/orgs/pathbit/packages/container/ominirtksync || true

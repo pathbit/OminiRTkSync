@@ -1197,10 +1197,18 @@ Desktop.ini
 
 # Android
 .csettings
-
-
-
-
 # End of https://mrkandreev.name/snippets/gitignore-generator/#vs,Linux,pydev,macOS,Flask,Python,Django,PyCharm,Windows,JetBrains,PyCharm+all,PyCharm+iml,JetBrains+all,JetBrains+iml,OpenFrameworks,VisualStudioCode,JupyterNotebooks,OpenFrameworks+VisualStudio,docker,code,py.vscode/
 
-.vscode/
+## CUSTOM ###
+### IGNORE
+tmp/
+temp/
+.tmp/
+.temp/
+**/tmp/
+**/temp/
+**/.tmp/
+**/.temp/
+
+### NOT IGNORE
+!.vscode/

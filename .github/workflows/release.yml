@@ -3,14 +3,48 @@ name: Release and Docker Package
 on:
   push:
     branches: ["master"]
+    paths:
+      - "src/**"
+      - "Dockerfile"
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
 
 jobs:
+  test:
+    name: Run Unit Tests (100% Required)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Create and activate virtual environment
+        run: |
+          python3 -m venv .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
+
+      - name: Run unit test suite
+        run: |
+          PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Test package install
+        run: |
+          pip install --upgrade pip
+          pip install .
+          ominirtksync --help
+          OminiRTKSync --help
+
   build-and-push-docker:
+    name: Build and Push Multi-Arch Docker Image (x86_64 and arm64)
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -33,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/pathbit/ominirtksync
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
             type=sha,format=short,prefix=sha-
@@ -52,6 +86,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   create-github-release:
+    name: Create GitHub Release
     needs: build-and-push-docker
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -67,8 +102,8 @@ jobs:
           body: |
             ## OminiRTKSync Docker Package
             
-            Multi-arch Docker image published to GitHub Container Registry:
+            Multi-arch Docker image (linux/amd64, linux/arm64) published to GitHub Container Registry:
             ```bash
-            docker pull ghcr.io/pathbit/ominirtksync:${{ github.ref_name }}
-            docker pull ghcr.io/pathbit/ominirtksync:latest
+            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:latest
             ```
