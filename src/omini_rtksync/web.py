@@ -3,13 +3,13 @@
 import base64
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-import sys
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -51,6 +51,8 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     omniroute_url: str = ""
     sync_callback: Optional[Callable[[], Dict[str, Any]]] = None
     cron_scheduler: Optional[Any] = None
+    _last_gw_check: float = 0.0
+    _last_gw_ok: bool = True
 
     def log_message(self, format, *args):
         pass
@@ -191,19 +193,39 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 
     def serve_healthz(self):
         db_ok = bool(self.db_path and os.path.exists(self.db_path))
-        gateway_ok = self.probe_gateway()
+        router_ok = True
+        if self.omniroute_url:
+            now = time.time()
+            if now - OminiDashboardHandler._last_gw_check < 15.0:
+                router_ok = OminiDashboardHandler._last_gw_ok
+            else:
+                try:
+                    req = urllib.request.Request(
+                        self.omniroute_url,
+                        headers={"User-Agent": "OminiRTKSync-Healthcheck/1.0"},
+                    )
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        router_ok = resp.status < 500
+                except urllib.error.HTTPError as e:
+                    router_ok = e.code < 500
+                except Exception:
+                    router_ok = False
+                OminiDashboardHandler._last_gw_check = now
+                OminiDashboardHandler._last_gw_ok = router_ok
 
-        if db_ok and gateway_ok:
-            payload, status = b"OK", HTTPStatus.OK
+        if db_ok and router_ok:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(b"OK")
         else:
             reason = "DATABASE_NOT_READY" if not db_ok else "OMNIROUTE_SERVICE_UNREACHABLE"
-            payload, status = reason.encode("utf-8"), HTTPStatus.SERVICE_UNAVAILABLE
-
-        self.send_response(status)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.write_body(payload)
+            self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(reason.encode("utf-8"))
 
     def serve_status(self):
         conns = []
