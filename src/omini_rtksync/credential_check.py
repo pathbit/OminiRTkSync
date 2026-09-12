@@ -27,7 +27,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
@@ -209,7 +209,11 @@ def check_api_key(
     # proxy tambem casa: sem esta checagem a chave do cliente sairia daqui para
     # api.openai.com ou api.anthropic.com, que nao e para onde ela deveria ir.
     if spec is not None and base_url and not _same_host(base_url, spec.url):
-        spec = ProbeSpec(base_url.rstrip("/") + "/models")
+        # So o ENDERECO muda. O jeito de autenticar continua sendo o do
+        # fornecedor: a Anthropic espera x-api-key e o Gemini x-goog-api-key, e
+        # trocar isso por um Bearer generico faria o proxy recusar uma chave
+        # perfeitamente valida.
+        spec = replace(spec, url=base_url.rstrip("/") + "/models")
 
     if spec is None:
         if not base_url:

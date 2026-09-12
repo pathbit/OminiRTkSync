@@ -112,7 +112,10 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
             "https://fonts.googleapis.com; "
             "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
-            "img-src 'self' data:; "
+            # As bandeiras do seletor de idioma sao SVG que o CSS do
+            # flag-icons busca no mesmo CDN. Sem esta origem elas
+            # simplesmente nao aparecem, sem erro visivel na tela.
+            "img-src 'self' data: https://cdn.jsdelivr.net; "
             "connect-src 'self'; "
             "form-action 'self'; "
             "frame-ancestors 'none'; "

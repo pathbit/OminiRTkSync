@@ -3,7 +3,7 @@
 import os
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 
 from omini_rtksync.config import load_dotenv, Settings
 
@@ -74,7 +74,7 @@ class TestSettingsFromEnv(unittest.TestCase):
         """Ambiente limpo com apenas as variáveis informadas."""
         base = {"DB_PATH": self.db_path, "HOST_HOME": self.tmp_dir.name}
         base.update(overrides)
-        return mock.patch.dict(os.environ, base, clear=True)
+        return unittest.mock.patch.dict(os.environ, base, clear=True)
 
     @staticmethod
     def _settings():

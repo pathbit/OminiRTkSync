@@ -10,7 +10,7 @@ container e o painel voltava a exigir a credencial de recuperacao.
 import os
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 
 from omini_rtksync.auth import read_db_credentials, write_db_credentials
 from omini_rtksync.config import Settings
@@ -26,7 +26,7 @@ class TestArmazenamentoNoStartup(unittest.TestCase):
         self.assertFalse(os.path.exists(self.data_dir))
 
     def settings(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DATA_DIR", None)
             return Settings(db_path=self.db_path, validate_credentials=False)
 

@@ -1,7 +1,7 @@
 """Tests for local instance discovery (Ollama, vLLM, LM Studio)."""
 
 import unittest
-from unittest import mock
+import unittest.mock
 
 from omini_rtksync.providers import LocalProvider
 
@@ -59,7 +59,7 @@ class TestModelDiscovery(unittest.TestCase):
 
     def test_unreachable_instance_stops_after_the_first_attempt(self):
         """Trying all three endpoints against a dead host just triples the timeout."""
-        with mock.patch("omini_rtksync.providers.urllib.request.urlopen",
+        with unittest.mock.patch("omini_rtksync.providers.urllib.request.urlopen",
                         side_effect=OSError("Connection refused")) as urlopen:
             models, error = self.provider.discover_models("http://127.0.0.1:11434/v1")
         self.assertEqual(models, [])
@@ -73,7 +73,7 @@ class TestCheckAndRefresh(unittest.TestCase):
         self.conn = {"provider": "ollama-local", "baseUrl": "http://127.0.0.1:11434/v1"}
 
     def test_reachable_instance_records_its_models(self):
-        with mock.patch.object(LocalProvider, "discover_models", return_value=(["llama3.2:3b"], "")):
+        with unittest.mock.patch.object(LocalProvider, "discover_models", return_value=(["llama3.2:3b"], "")):
             renewed, data, messages = self.provider.check_and_refresh(self.conn)
         # Sondagem local nao conta como renovacao de credencial; o que prova que
         # funcionou e o dicionario devolvido para gravacao.
@@ -85,7 +85,7 @@ class TestCheckAndRefresh(unittest.TestCase):
         self.assertIn("1 model(s)", messages[0])
 
     def test_unreachable_instance_is_not_assumed_healthy(self):
-        with mock.patch.object(LocalProvider, "discover_models", return_value=([], "Connection refused")):
+        with unittest.mock.patch.object(LocalProvider, "discover_models", return_value=([], "Connection refused")):
             renewed, data, messages = self.provider.check_and_refresh(self.conn)
         self.assertFalse(renewed)
         self.assertIsNotNone(data)

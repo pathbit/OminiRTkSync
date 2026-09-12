@@ -289,8 +289,13 @@ class LocalProvider:
     def is_local_connection(cls, conn: Dict[str, Any]) -> bool:
         """Classificacao de "local" compartilhada, para os providers nao brigarem."""
         provider = str(conn.get("provider", "")).lower()
-        if any(host in cls._base_url(conn) for host in LOCAL_HOSTS):
-            return True
+        endereco = cls._base_url(conn)
+        if endereco:
+            # Endereco declarado decide sozinho. O marcador "ollama" tambem casa
+            # com a conta hospedada em https://ollama.com/v1, e trata-la como
+            # local mandaria o sincronizador sondar um catalogo que nao existe
+            # ali, alem de tirar a conexao do caminho de validacao de chave.
+            return any(host in endereco for host in LOCAL_HOSTS)
         if any(marker in provider for marker in LOCAL_PROVIDER_MARKERS):
             return True
         return False

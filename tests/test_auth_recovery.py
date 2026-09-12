@@ -6,9 +6,9 @@ import stat
 import tempfile
 import pathlib
 import unittest
+import unittest.mock
 
 from omini_rtksync import cli as omini_rtksync_cli
-from unittest import mock
 
 from omini_rtksync.auth import (
     constant_time_equals,
@@ -99,11 +99,11 @@ class TestRecoveryHashStorage(unittest.TestCase):
         self.tmp_dir.cleanup()
 
     def test_env_hash_wins(self):
-        with mock.patch.dict(os.environ, {"DASHBOARD_RECOVERY_HASH": "do-ambiente"}, clear=True):
+        with unittest.mock.patch.dict(os.environ, {"DASHBOARD_RECOVERY_HASH": "do-ambiente"}, clear=True):
             self.assertEqual(resolve_recovery_hash(self.recovery_file), "do-ambiente")
 
     def test_generated_hash_is_persisted_and_reused(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
             first, generated = ensure_recovery_hash(self.recovery_file)
             self.assertTrue(generated)
             self.assertTrue(first)
@@ -113,13 +113,13 @@ class TestRecoveryHashStorage(unittest.TestCase):
             self.assertEqual(second, first)
 
     def test_generated_hash_file_is_owner_only(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
             ensure_recovery_hash(self.recovery_file)
         mode = stat.S_IMODE(os.stat(self.recovery_file).st_mode)
         self.assertEqual(mode, 0o600)
 
     def test_unwritable_path_still_returns_a_hash(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
             value, generated = ensure_recovery_hash("/proc/nao-pode/recovery")
         self.assertTrue(value)
         self.assertTrue(generated)
@@ -151,12 +151,12 @@ class TestSettingsAuthIntegration(unittest.TestCase):
     def _settings(self, **env):
         base = {"DB_PATH": self.db_path, "DATA_DIR": self.tmp_dir.name}
         base.update(env)
-        with mock.patch.dict(os.environ, base, clear=True):
+        with unittest.mock.patch.dict(os.environ, base, clear=True):
             return Settings.from_env(env_file=""), dict(base)
 
     def test_full_lifecycle_from_first_boot_to_change_to_recovery(self):
         settings, base = self._settings()
-        with mock.patch.dict(os.environ, base, clear=True):
+        with unittest.mock.patch.dict(os.environ, base, clear=True):
             # 1. Primeiro acesso. Nao existe senha de fabrica: um valor estatico
             # seria, por definicao, uma credencial publica. Quem abre a porta e a
             # credencial sorteada no primeiro boot.
@@ -181,13 +181,13 @@ class TestSettingsAuthIntegration(unittest.TestCase):
 
     def test_recovery_hash_can_be_pinned_by_environment(self):
         settings, base = self._settings(DASHBOARD_RECOVERY_HASH="hash-fixo-do-container")
-        with mock.patch.dict(os.environ, base, clear=True):
+        with unittest.mock.patch.dict(os.environ, base, clear=True):
             settings.update_auth_credentials("operador", "Minha-Senha1")
             self.assertTrue(settings.verify_credentials("admin", "hash-fixo-do-container"))
 
     def test_env_authoritative_mode_ignores_the_saved_file(self):
         settings, base = self._settings(DASHBOARD_PASSWORD="do-ambiente")
-        with mock.patch.dict(os.environ, base, clear=True):
+        with unittest.mock.patch.dict(os.environ, base, clear=True):
             # A tela nao consegue sobrescrever o ambiente.
             self.assertFalse(settings.update_auth_credentials("da-tela", "da-tela"))
             self.assertTrue(settings.verify_credentials("admin", "do-ambiente"))

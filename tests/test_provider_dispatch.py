@@ -17,7 +17,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 
 from omini_rtksync.credential_check import (
     STATE_UNREACHABLE,
@@ -65,7 +65,7 @@ class TestLocalNaoEEngolidaPeloHandlerDeChave(unittest.TestCase):
 class TestVerificacaoNaoERenovacao(unittest.TestCase):
     def test_a_plain_validation_does_not_count_as_a_renewal(self):
         provider = ApiKeyProvider(validate_credentials=True)
-        with mock.patch(
+        with unittest.mock.patch(
             "omini_rtksync.providers.check_connection",
             return_value=CheckResult(state=STATE_VALID, detail="ok", checked_at="2026-01-01T00:00:00Z"),
         ):
@@ -77,13 +77,13 @@ class TestVerificacaoNaoERenovacao(unittest.TestCase):
 
 class TestCatalogoVazioNaoEQueda(unittest.TestCase):
     def test_an_instance_answering_with_no_model_is_still_up(self):
-        with mock.patch.object(LocalProvider, "discover_models", return_value=([], "")):
+        with unittest.mock.patch.object(LocalProvider, "discover_models", return_value=([], "")):
             _, data, msgs = LocalProvider().check_and_refresh(dict(LOCAL))
         self.assertEqual(data["testStatus"], "active")
         self.assertTrue(any("empty model catalog" in m for m in msgs))
 
     def test_an_instance_that_does_not_answer_is_unreachable(self):
-        with mock.patch.object(LocalProvider, "discover_models", return_value=([], "Connection refused")):
+        with unittest.mock.patch.object(LocalProvider, "discover_models", return_value=([], "Connection refused")):
             _, data, _ = LocalProvider().check_and_refresh(dict(LOCAL))
         self.assertEqual(data["testStatus"], "unreachable")
 
@@ -106,7 +106,7 @@ class TestEnderecoDeclaradoVenceONome(unittest.TestCase):
             vistas.append(request.full_url)
             return CheckResult(state=STATE_VALID, detail="ok", checked_at="2026-01-01T00:00:00Z")
 
-        with mock.patch("omini_rtksync.credential_check._execute", side_effect=espiao):
+        with unittest.mock.patch("omini_rtksync.credential_check._execute", side_effect=espiao):
             check_api_key(provider, "k", base_url=base_url)
         return vistas
 
@@ -305,3 +305,37 @@ class TestSaidaDeRedePorConta(unittest.TestCase):
         conexoes = get_all_connections(self.db)
         self.assertEqual(len(conexoes), 2)
         self.assertIsNone(conexoes[0]["egressProxy"])
+
+
+class TestOllamaHospedadoNaoELocal(unittest.TestCase):
+    """O marcador "ollama" também casa com a conta hospedada.
+
+    Tratar `https://ollama.com/v1` como local mandaria o sincronizador sondar um
+    catálogo que não existe ali, e tiraria a conexão do caminho de validação de
+    chave — que é justamente onde ela precisa estar.
+    """
+
+    HOSPEDADA = {
+        "id": "c-nuvem", "provider": "ollama", "name": "Ollama Cloud",
+        "hasApiKey": True, "apiKey": "k", "isOAuth": False,
+        "baseUrl": "https://ollama.com/v1",
+        "providerSpecificData": {"baseUrl": "https://ollama.com/v1"},
+    }
+    LOCAL = {
+        "id": "c-local", "provider": "ollama", "name": "Ollama Local",
+        "hasApiKey": True, "apiKey": "k", "isOAuth": False,
+        "baseUrl": "http://127.0.0.1:11434/v1",
+        "providerSpecificData": {"baseUrl": "http://127.0.0.1:11434/v1"},
+    }
+
+    def test_the_hosted_account_goes_to_the_api_key_handler(self):
+        self.assertFalse(LocalProvider.is_local_connection(self.HOSPEDADA))
+        self.assertTrue(ApiKeyProvider().can_handle(self.HOSPEDADA))
+
+    def test_the_local_instance_still_goes_to_the_local_handler(self):
+        self.assertTrue(LocalProvider.is_local_connection(self.LOCAL))
+        self.assertFalse(ApiKeyProvider().can_handle(self.LOCAL))
+
+    def test_without_a_declared_address_the_name_still_decides(self):
+        sem_endereco = {"id": "c", "provider": "ollama", "name": "x", "hasApiKey": True}
+        self.assertTrue(LocalProvider.is_local_connection(sem_endereco))

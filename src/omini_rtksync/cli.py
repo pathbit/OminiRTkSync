@@ -249,7 +249,11 @@ class OmniSyncEngine:
                         test_status=data.get("testStatus"),
                         credential_state=data.get("credentialState"),
                         last_error=data.get("lastError"),
-                        clear_rate_limit=not data.get("rateLimitedUntil"),
+                        # O provider ja apagou a trava vencida de `data`, entao
+                        # inferir "limpar" da ausencia dela invertia o sentido e
+                        # preservava justamente a trava que devia sair. Quem diz
+                        # e a mensagem do provider.
+                        clear_rate_limit=any("rateLimitedUntil" in n for n in notes),
                     )
                 if renovou:
                     refreshed += 1
