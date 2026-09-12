@@ -122,6 +122,17 @@ class OmniSyncEngine:
                     log_msg("STATUS", f"[{provider} · {name}] {nota}")
                     detalhe["actions"].append(nota)
 
+            # Trava de rate limit vencida sai antes de qualquer ramo: a janela
+            # do provedor reabriu, e isso vale para conexão OAuth, de chave ou
+            # local. Deixar a limpeza dentro de um único ramo mantinha a marca
+            # gravada — e a conexão amarela — em todos os outros.
+            trava = parse_expiry_to_ms(c.get("rateLimitedUntil"))
+            if trava is not None and trava <= int(time.time() * 1000):
+                if update_connection_health(self.settings.db_path, cid, clear_rate_limit=True):
+                    nota = "Trava de rate limit vencida removida"
+                    log_msg("STATUS", f"[{provider} · {name}] {nota}")
+                    detalhe["actions"].append(nota)
+
             # 1. Google / Antigravity OAuth
             if provider in ("antigravity", "gemini-cli"):
                 local = self.google_provider.read_local_credential()
@@ -249,12 +260,9 @@ class OmniSyncEngine:
                         test_status=data.get("testStatus"),
                         credential_state=data.get("credentialState"),
                         last_error=data.get("lastError"),
-                        # Quem decide e o proprio prazo: se `rateLimitedUntil`
-                        # ja venceu, a janela do provedor reabriu e a trava tem
-                        # de sair do banco. Procurar o nome do campo nas notas
-                        # do provider nunca casava -- elas sao escritas em
-                        # portugues -- e a trava ficava gravada para sempre.
-                        clear_rate_limit=not c.rate_limit_active,
+                        # A trava vencida ja foi removida no topo do laco, para
+                        # qualquer tipo de conexao. Repetir a decisao aqui so
+                        # duplicaria a regra em um unico ramo.
                     )
                 if renovou:
                     refreshed += 1

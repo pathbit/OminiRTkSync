@@ -237,5 +237,65 @@ class TestCarimboDeRenovacaoNoSchemaRelacional(unittest.TestCase):
         self.assertEqual(linha["access_token"], "token-novo")
 
 
+class TestTravaVencidaSaiNoCicloReal(unittest.TestCase):
+    """A limpeza vale para qualquer conexão, não só para as de chave de API.
+
+    O primeiro corte tratava a trava dentro do ramo de chave de API. Uma
+    conexão OAuth — que é o caso comum no OmniRoute — passava longe dele e a
+    marca vencida continuava gravada, deixando a conexão amarela para sempre.
+    Este teste roda o ciclo inteiro contra um banco no schema relacional real.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.db = os.path.join(self.dir, "storage.sqlite")
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "CREATE TABLE provider_connections (id TEXT PRIMARY KEY, provider TEXT, name TEXT,"
+            " access_token TEXT, refresh_token TEXT, api_key TEXT, expires_at TEXT,"
+            " test_status TEXT, rate_limited_until TEXT, last_tested TEXT, last_error TEXT,"
+            " provider_specific_data TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO provider_connections VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "c1",
+                "github",
+                "Conta OAuth",
+                "tok",
+                "ref",
+                None,
+                agora_mais(7200),
+                "active",
+                agora_mais(-7200),  # trava vencida há duas horas
+                None,
+                None,
+                None,
+                "2026-01-01",
+                "2026-01-01",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def trava_gravada(self):
+        conn = sqlite3.connect(self.db)
+        v = conn.execute("SELECT rate_limited_until FROM provider_connections WHERE id='c1'").fetchone()[0]
+        conn.close()
+        return v
+
+    def test_an_expired_hold_is_cleared_for_an_oauth_connection(self):
+        from omini_rtksync.cli import OmniSyncEngine
+        from omini_rtksync.config import Settings
+
+        self.assertIsNotNone(self.trava_gravada())
+        motor = OmniSyncEngine(Settings(db_path=self.db, enable_web=False, validate_credentials=False))
+        motor.sync_all()
+        self.assertIsNone(
+            self.trava_gravada(),
+            "a janela do provedor reabriu ha duas horas; a marca tinha de sair",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
