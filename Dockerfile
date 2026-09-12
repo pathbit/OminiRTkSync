@@ -1,38 +1,32 @@
-# ==============================================================================
-# OminiRTKSync: OmniRoute Universal Token & Connection Sync
-# Imagem oficial baseada em Python 3.14 Alpine
-# ==============================================================================
+# OminiRTKSync — guardião de conexões do OmniRoute (fonte vendored via git
+# subtree de pathbit/OminiRTkSync). A imagem base é pinada por digest como
+# qualquer outra dependência externa (contrato SEC-01).
+FROM python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
 
-FROM python:3.14-alpine
-
-LABEL org.opencontainers.image.title="OminiRTKSync"
-LABEL org.opencontainers.image.description="OminiRoute Universal Token & Connection Synchronizer"
-LABEL org.opencontainers.image.authors="Eliel Sousa <eliel@pathbit.co>"
-LABEL org.opencontainers.image.source="https://github.com/pathbit/OminiRTkSync"
+LABEL org.opencontainers.image.title="TalqueeAI OmniRTKSync"
+LABEL org.opencontainers.image.description="OminiRTKSync com base pinada por digest e painel restrito ao loopback"
+LABEL org.opencontainers.image.version="1.0.0-talquee.1"
 
 WORKDIR /app
 
-# Criação obrigatória e isolada do Virtual Environment
 RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-ENV VIRTUAL_ENV="/opt/venv"
+ENV PATH="/opt/venv/bin:$PATH" \
+    VIRTUAL_ENV="/opt/venv" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    DB_PATH=/app/data/storage.sqlite \
+    OMNIROUTE_URL=http://omniroute:20128 \
+    SYNC_INTERVAL=300 \
+    REFRESH_MARGIN=900 \
+    WEB_PORT=9090 \
+    WEB_HOST=127.0.0.1 \
+    ENABLE_WEB_DASHBOARD=1
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src
-ENV DB_PATH=/app/data/storage.sqlite
-ENV OMNIROUTE_URL=http://127.0.0.1:20128
-ENV SYNC_INTERVAL=300
-ENV REFRESH_MARGIN=900
-ENV WEB_PORT=9090
-ENV WEB_HOST=0.0.0.0
-ENV ENABLE_WEB_DASHBOARD=1
+COPY apps/ominirtksync/src/ /app/src/
+COPY apps/ominirtksync/pyproject.toml /app/
 
-COPY src/ /app/src/
-COPY pyproject.toml /app/
-
-# Instalação do pacote dentro do virtual environment
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e .
 
 EXPOSE 9090
 
