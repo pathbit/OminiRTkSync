@@ -54,6 +54,8 @@ class GoogleProvider:
     def refresh(
         self, refresh_token: str, client_id: str, client_secret: str
     ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+        if not client_id or not client_secret:
+            return False, None, "client_id ou client_secret não configurado no ambiente nem encontrado em shared.js"
         payload = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,

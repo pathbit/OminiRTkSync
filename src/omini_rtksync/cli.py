@@ -51,47 +51,61 @@ class OmniSyncEngine:
             # 1. Google / Antigravity OAuth
             if provider in ("antigravity", "gemini-cli"):
                 local = self.google_provider.read_local_credential()
-                if local and local.get("access_token") and local.get("access_token") != c.get("accessToken"):
-                    exp_ms = now_ms + (3599 * 1000)
-                    update_connection(
-                        self.settings.db_path,
-                        cid,
-                        access_token=local["access_token"],
-                        refresh_token=local.get("refresh_token", c.get("refreshToken", "")),
-                        expires_at_ms=exp_ms,
-                    )
-                    refreshed += 1
-                    log_msg("SUCESSO", f"[{provider} · {name}] Token atualizado via credencial local do host")
-                    continue
+                ref_tok = c.get("refreshToken")
+                if not ref_tok and local:
+                    ref_tok = local.get("refresh_token")
 
                 exp_ms = parse_expiry_to_ms(c.get("expiresAt"))
                 rem_sec = int((exp_ms - now_ms) / 1000) if exp_ms else 0
 
-                if rem_sec <= self.settings.refresh_margin:
-                    ref_tok = c.get("refreshToken")
+                if rem_sec <= self.settings.refresh_margin or not c.get("accessToken"):
                     if ref_tok:
                         client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
                         client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
                         if local:
                             client_id = local.get("client_id") or client_id
                             client_secret = local.get("client_secret") or client_secret
+                        if not client_id or not client_secret:
+                            data_dir = os.environ.get("DATA_DIR", "/app/data")
+                            candidate_files = [
+                                os.path.join(data_dir, "shared.js"),
+                                "/app/data/shared.js",
+                                "/app/open-sse/providers/shared.js",
+                                "/app/open-sse/providers/registry/antigravity.js",
+                            ]
+                            for fpath in candidate_files:
+                                if os.path.exists(fpath):
+                                    try:
+                                        with open(fpath, "r", encoding="utf-8") as f:
+                                            content = f.read()
+                                        import re
+                                        m_id = re.search(r'clientId:\s*["\']([^"\']+)["\']', content)
+                                        m_sec = re.search(r'clientSecret:\s*["\']([^"\']+)["\']', content)
+                                        if m_id and not client_id:
+                                            client_id = m_id.group(1)
+                                        if m_sec and not client_secret:
+                                            client_secret = m_sec.group(1)
+                                        if client_id and client_secret:
+                                            break
+                                    except Exception:
+                                        pass
 
-                        if client_id and client_secret:
-                            ok, resp, err = self.google_provider.refresh(ref_tok, client_id, client_secret)
-                            if ok and resp:
-                                exp_in = int(resp.get("expires_in", 3599))
-                                new_exp_ms = now_ms + (exp_in * 1000)
-                                update_connection(
-                                    self.settings.db_path,
-                                    cid,
-                                    access_token=resp["access_token"],
-                                    refresh_token=resp.get("refresh_token", ref_tok),
-                                    expires_at_ms=new_exp_ms,
-                                    )
-                                refreshed += 1
-                                log_msg("SUCESSO", f"[{provider} · {name}] OAuth renovado com sucesso ({exp_in}s)")
-                            else:
-                                log_msg("FALHA", f"[{provider} · {name}] Erro ao renovar OAuth: {err}")
+                        ok, resp, err = self.google_provider.refresh(ref_tok, client_id, client_secret)
+                        if ok and resp:
+                            exp_in = int(resp.get("expires_in", 3599))
+                            new_exp_ms = now_ms + (exp_in * 1000)
+                            update_connection(
+                                self.settings.db_path,
+                                cid,
+                                access_token=resp["access_token"],
+                                refresh_token=resp.get("refresh_token", ref_tok),
+                                expires_at_ms=new_exp_ms,
+                            )
+                            refreshed += 1
+                            log_msg("SUCESSO", f"[{provider} · {name}] OAuth renovado com sucesso ({exp_in}s)")
+                            continue
+                        else:
+                            log_msg("FALHA", f"[{provider} · {name}] Erro ao renovar OAuth: {err}")
                 else:
                     log_msg("OK", f"[{provider} · {name}] Token válido por mais {rem_sec // 60} min")
                 continue

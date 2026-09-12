@@ -42,23 +42,7 @@ class HostDiscoveryEngine:
 
     def discover_google(self) -> Optional[Dict[str, Any]]:
         """Descobre tokens do Google Antigravity / Gemini CLI."""
-        creds_candidates = [
-            os.path.join(self.host_home, ".gemini", "oauth_creds.json"),
-            os.path.join(self.host_home, ".config", "antigravity", "oauth_creds.json"),
-            "/root/.gemini/oauth_creds.json",
-        ]
-        for p in creds_candidates:
-            data = self._read_json(p)
-            if data and data.get("access_token"):
-                return {
-                    "source_path": p,
-                    "accessToken": data.get("access_token"),
-                    "refreshToken": data.get("refresh_token"),
-                    "clientId": data.get("client_id") or data.get("clientId"),
-                    "clientSecret": data.get("client_secret") or data.get("clientSecret"),
-                    "expiry": data.get("expiry_date"),
-                }
-
+        # 1. jetski-standalone-oauth-token (token standalone do Antigravity)
         jetski_candidates = [
             os.path.join(self.host_home, ".gemini", "jetski-standalone-oauth-token"),
             os.path.join(self.host_home, ".config", "antigravity", "jetski-standalone-oauth-token"),
@@ -68,16 +52,37 @@ class HostDiscoveryEngine:
         for p in jetski_candidates:
             data = self._read_json(p)
             if data:
-                tok = data.get("access_token") or data.get("accessToken") or data.get("token")
-                if tok:
+                tok_dict = data.get("token") if isinstance(data.get("token"), dict) else data
+                acc = tok_dict.get("access_token") or tok_dict.get("accessToken")
+                ref = tok_dict.get("refresh_token") or tok_dict.get("refreshToken")
+                if acc or ref:
                     return {
                         "source_path": p,
-                        "accessToken": tok,
-                        "refreshToken": data.get("refresh_token") or data.get("refreshToken"),
-                        "clientId": data.get("client_id") or data.get("clientId"),
-                        "clientSecret": data.get("client_secret") or data.get("clientSecret"),
-                        "expiry": data.get("expiry"),
+                        "accessToken": acc,
+                        "refreshToken": ref,
+                        "clientId": tok_dict.get("client_id") or data.get("client_id"),
+                        "clientSecret": tok_dict.get("client_secret") or data.get("client_secret"),
+                        "expiry": tok_dict.get("expiry"),
                     }
+
+        # 2. oauth_creds.json
+        creds_candidates = [
+            os.path.join(self.host_home, ".gemini", "oauth_creds.json"),
+            os.path.join(self.host_home, ".config", "antigravity", "oauth_creds.json"),
+            "/root/.gemini/oauth_creds.json",
+        ]
+        for p in creds_candidates:
+            data = self._read_json(p)
+            if data and (data.get("access_token") or data.get("refresh_token")):
+                return {
+                    "source_path": p,
+                    "accessToken": data.get("access_token"),
+                    "refreshToken": data.get("refresh_token"),
+                    "clientId": data.get("client_id") or data.get("clientId"),
+                    "clientSecret": data.get("client_secret") or data.get("clientSecret"),
+                    "expiry": data.get("expiry_date"),
+                }
+
         return None
 
     def discover_claude(self) -> Optional[Dict[str, Any]]:
