@@ -54,9 +54,11 @@ jobs:
           package-name: "ominirtksync"
           package-type: container
           min-versions-to-keep: ${{ github.event.inputs.keep || '3' }}
-          # "latest" nunca entra na conta de descarte: e a tag que os
-          # docker-compose em producao resolvem.
-          ignore-versions-with-tags: "latest"
+          # Nao existe input para preservar por tag nesta action: o unico filtro
+          # e "ignore-versions", casado contra o *nome* da versao, que para
+          # container e o digest. "latest" fica seguro mesmo assim, porque ela
+          # sempre aponta para o digest mais novo, que min-versions-to-keep
+          # mantem por construcao.
 
       - name: Report what survived
         env:
