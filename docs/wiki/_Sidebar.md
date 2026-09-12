@@ -7,6 +7,7 @@
 - [Authentication](Authentication)
 - [Logging](Logging)
 - [Architecture](Architecture)
+- [Egress and Multi-Session](Egress-And-Multi-Session)
 - [Troubleshooting](Troubleshooting)
 - [Upstream Fixes](Upstream-Fixes)
 

@@ -21,6 +21,7 @@ republishes these pages automatically. Editing a page directly here will be over
 | [Authentication](Authentication) | Credentials, headless mode, break-glass recovery |
 | [Logging](Logging) | Persistent file log, rotation, 30-day retention |
 | [Architecture](Architecture) | How the sync engine talks to the OmniRoute database |
+| [Egress and Multi-Session](Egress-And-Multi-Session) | Why several accounts sharing one outbound address is the risk, and what the gateway models |
 | [Troubleshooting](Troubleshooting) | Concrete symptoms and what they actually mean |
 | [Upstream Fixes](Upstream-Fixes) | Bugs found in the gateways and the patches sent upstream |
 
@@ -62,6 +63,29 @@ Both synchronizers listen on **port 9090 inside their container**. The published
 differ so they can run side by side: `9091` for 9RTKSync, `9092` for OminiRTKSync.
 
 ---
+
+---
+
+## Signing in to the dashboard
+
+| | |
+| :--- | :--- |
+| **Address** | `http://localhost:9092` |
+| **User** | `admin` — or whatever `DASHBOARD_USER` says |
+| **Password** | the value you set in `DASHBOARD_PASSWORD` |
+
+There is **no factory password**: a fixed one shipped in an image is public the
+moment the image is. Set yours in `.env` before bringing the stack up.
+
+Brought it up without setting one? The container generated a recovery
+credential on first boot — read it and sign in as `admin`, then set a real
+password on the screen:
+
+```bash
+docker exec ominirtksync cat /app/data/.dashboard_recovery
+```
+
+Full detail in [Authentication](Authentication).
 
 ## License
 

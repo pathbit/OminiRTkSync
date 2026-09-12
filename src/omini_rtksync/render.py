@@ -662,6 +662,16 @@ def render_dashboard(
     .accordion-button:not(.collapsed) {{ background: var(--surface-2); color: #fff; box-shadow: none; }}
     .cron-log {{ white-space: pre-wrap; word-break: break-word; font-size: .8rem; color: #b9c0cf;
                  background: #0b0d12; border: 1px solid var(--line); border-radius: .35rem; padding: .6rem; }}
+    /* Barra de acoes do cabecalho: todos os controles com a MESMA altura.
+       O seletor de idioma carrega so a bandeira, um elemento com altura
+       propria; sem texto ao lado para definir a linha, ele esticava o botao e
+       ficava mais alto que os vizinhos. Fixar a altura em todos resolve na
+       origem, em vez de compensar caso a caso. */
+    .barra-acoes {{ display: flex; align-items: stretch; gap: .5rem; }}
+    .barra-acoes > * {{ display: flex; align-items: center; }}
+    .barra-acoes .btn {{ height: 2rem; padding-top: 0; padding-bottom: 0;
+                         display: inline-flex; align-items: center; line-height: 1; }}
+    .barra-acoes .fi {{ line-height: 1; }}
   </style>
 </head>
 <body>
@@ -680,7 +690,7 @@ def render_dashboard(
           </p>
         </div>
       </div>
-      <div class="d-flex align-items-center gap-2">
+      <div class="barra-acoes">
         {render_language_switcher(lang)}
         <form method="post" action="/acoes/atualizar" class="m-0 d-inline">
           <button class="btn btn-outline-light btn-sm" type="submit"

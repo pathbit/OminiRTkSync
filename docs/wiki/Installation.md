@@ -143,3 +143,38 @@ docker compose up -d ominirtksync
 State that survives upgrades lives in the data volume: `.dashboard_auth.json` (screen-set
 credentials), `.dashboard_recovery` (break-glass hash) and `ui_prefs.sqlite` (interface
 language). None of them are stored in the gateway's own database.
+
+## Configuration: `.env` from the example
+
+Everything is configured by environment variable, read from a `.env` next to the
+compose file — Compose finds it on its own, with no flag.
+
+```bash
+make setup      # creates .env from .env.example, never overwriting an existing one
+```
+
+The target then lists exactly which variables were left blank. Fill them in and
+bring the stack up.
+
+`.env` is never versioned, and `.env.example` carries no secret value — a value
+published in an example file is a public credential by definition. A test
+guarantees every variable a compose requires exists in the example, so
+`cp .env.example .env` never produces an incomplete `.env`.
+
+## Ports
+
+The three synchronizers listen on the **same port inside the container**
+(`9090`) and publish on different host ports, so all three can run side by side.
+Same for the gateways.
+
+| Service | Inside | Published |
+| :--- | :--- | :--- |
+| 9Router | `20128` | `20128` |
+| OmniRoute | `20128` | `20129` |
+| LiteLLM | `4000` | `20130` |
+| 9RTKSync panel | `9090` | `9091` |
+| OminiRTkSync panel | `9090` | `9092` |
+| LiteLlmRTKSync panel | `9090` | `9093` |
+
+All bound to `127.0.0.1`: the gateway holds real credentials and should not be
+reachable from the local network.
