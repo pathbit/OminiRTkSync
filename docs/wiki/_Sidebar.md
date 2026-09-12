@@ -9,6 +9,7 @@
 - [Architecture](Architecture)
 - [Egress and Multi-Session](Egress-And-Multi-Session)
 - [Remote Access](Remote-Access)
+- [Egress Testing](Egress-Testing)
 - [Troubleshooting](Troubleshooting)
 - [Upstream Fixes](Upstream-Fixes)
 

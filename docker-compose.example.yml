@@ -1,4 +1,4 @@
-name: omniroute-stack
+name: ominirtksync-stack
 
 services:
   omniroute:
