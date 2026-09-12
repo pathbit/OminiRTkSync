@@ -28,8 +28,9 @@ services:
       - "127.0.0.1:9191:9191"
     volumes:
       - omniroute_data:/app/data
-      - ${HOME}/.gemini:/root/.gemini:ro
+      - ${HOME}:/root/host:ro
     environment:
+      - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
       - OMNIROUTE_URL=http://omniroute:20128
       - SYNC_INTERVAL=300

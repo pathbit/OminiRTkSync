@@ -9,8 +9,9 @@ from datetime import datetime
 
 from .config import Settings
 from .database import get_all_combos, get_all_connections, update_connection
+from .discovery import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
-from .providers import GoogleProvider
+from .providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
 from .web import start_omini_web
 
 
@@ -22,7 +23,14 @@ def log_msg(prefix: str, text: str):
 class OmniSyncEngine:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.google_provider = GoogleProvider(credential_paths=settings.credential_paths)
+        self.discovery = HostDiscoveryEngine(
+            host_home=settings.host_home,
+            extra_paths=settings.credential_paths,
+        )
+        self.google_provider = GoogleProvider(credential_paths=settings.credential_paths, discovery=self.discovery)
+        self.oauth_provider = GenericOAuthProvider(discovery=self.discovery)
+        self.api_provider = ApiKeyProvider(discovery=self.discovery)
+        self.local_provider = LocalProvider()
 
     def sync_all(self):
         if not os.path.exists(self.settings.db_path):
@@ -40,9 +48,8 @@ class OmniSyncEngine:
             cid = c["id"]
             name = c["name"]
 
-            # Google / Antigravity OAuth
+            # 1. Google / Antigravity OAuth
             if provider in ("antigravity", "gemini-cli"):
-                # Verifica se há credencial local no host
                 local = self.google_provider.read_local_credential()
                 if local and local.get("access_token") and local.get("access_token") != c.get("accessToken"):
                     exp_ms = now_ms + (3599 * 1000)
@@ -57,7 +64,6 @@ class OmniSyncEngine:
                     log_msg("SUCESSO", f"[{provider} · {name}] Token atualizado via credencial local do host")
                     continue
 
-                # Verifica expiração
                 exp_ms = parse_expiry_to_ms(c.get("expiresAt"))
                 rem_sec = int((exp_ms - now_ms) / 1000) if exp_ms else 0
 
@@ -81,13 +87,50 @@ class OmniSyncEngine:
                                     access_token=resp["access_token"],
                                     refresh_token=resp.get("refresh_token", ref_tok),
                                     expires_at_ms=new_exp_ms,
-                                )
+                                    )
                                 refreshed += 1
                                 log_msg("SUCESSO", f"[{provider} · {name}] OAuth renovado com sucesso ({exp_in}s)")
                             else:
                                 log_msg("FALHA", f"[{provider} · {name}] Erro ao renovar OAuth: {err}")
                 else:
                     log_msg("OK", f"[{provider} · {name}] Token válido por mais {rem_sec // 60} min")
+                continue
+
+            # 2. Demais Provedores OAuth (Claude, GitHub, Codex, Kiro)
+            if self.oauth_provider.can_handle(c):
+                mod, data, notes = self.oauth_provider.check_and_refresh(c, margin_seconds=self.settings.refresh_margin)
+                for note in notes:
+                    log_msg("STATUS", f"[{provider} · {name}] {note}")
+                if mod and data:
+                    update_connection(
+                        self.settings.db_path,
+                        cid,
+                        access_token=data["accessToken"],
+                        refresh_token=data.get("refreshToken", c.get("refreshToken", "")),
+                        expires_at_ms=data.get("expiresAt", now_ms + 3600000),
+                    )
+                    refreshed += 1
+                    log_msg("SUCESSO", f"[{provider} · {name}] Credenciais OAuth atualizadas no storage.sqlite")
+                continue
+
+            # 3. Provedores de API Key (Groq, Mistral, OpenRouter, Gemini, OpenAI, etc.)
+            if self.api_provider.can_handle(c):
+                mod, data, notes = self.api_provider.check_and_refresh(c)
+                for note in notes:
+                    log_msg("STATUS", f"[{provider} · {name}] {note}")
+                if mod and data:
+                    refreshed += 1
+                    log_msg("SUCESSO", f"[{provider} · {name}] Chave de API sincronizada no storage.sqlite")
+                continue
+
+            # 4. Provedores Locais (Ollama, proxies locais)
+            if self.local_provider.can_handle(c):
+                _, _, notes = self.local_provider.check_and_refresh(c)
+                for note in notes:
+                    log_msg("STATUS", f"[{provider} · {name}] {note}")
+                continue
+
+            log_msg("INFO", f"[{provider} · {name}] Conexão preservada sem pendências")
 
         return {"success": True, "total": len(conns), "refreshed": refreshed}
 
@@ -138,7 +181,18 @@ def run_daemon(settings: Settings):
     print("⚡ OMINIRTKSYNC · OMNIROUTE UNIVERSAL TOKEN & CONNECTION SYNCHRONIZER", flush=True)
     print(f"   Banco SQLite: {settings.db_path}", flush=True)
     print(f"   Gateway URL:  {settings.omniroute_url}", flush=True)
+    print(f"   Host Home:    {engine.discovery.host_home}", flush=True)
     print("=" * 74, flush=True)
+
+    # Varredura inicial de credenciais disponíveis no host
+    discovered = engine.discovery.discover_all()
+    found_any = False
+    for prov, info in discovered.items():
+        if info:
+            found_any = True
+            log_msg("DISCOVERY", f"Credencial detectada no host: [{prov}] -> {info.get('source_path')}")
+    if not found_any:
+        log_msg("DISCOVERY", f"Nenhuma credencial local pré-existente em {engine.discovery.host_home}")
 
     if settings.enable_web:
         try:
