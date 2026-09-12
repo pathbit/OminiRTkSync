@@ -21,6 +21,7 @@ republishes these pages automatically. Editing a page directly here will be over
 | [Authentication](Authentication) | Credentials, headless mode, break-glass recovery |
 | [Logging](Logging) | Persistent file log, rotation, 30-day retention |
 | [Architecture](Architecture) | How the sync engine talks to the OmniRoute database |
+| [Remote Access](Remote-Access) | Tunnel, Tailscale, and what has to be on before either |
 | [Egress and Multi-Session](Egress-And-Multi-Session) | Why several accounts sharing one outbound address is the risk, and what the gateway models |
 | [Troubleshooting](Troubleshooting) | Concrete symptoms and what they actually mean |
 | [Upstream Fixes](Upstream-Fixes) | Bugs found in the gateways and the patches sent upstream |

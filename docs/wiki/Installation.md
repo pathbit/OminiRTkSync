@@ -23,7 +23,8 @@ services:
     container_name: omniroute
     restart: unless-stopped
     ports:
-      - "127.0.0.1:20128:20128"
+      # 20128 dentro do container; 8082 no host.
+      - "127.0.0.1:8082:20128"
     environment:
       - DATA_DIR=/app/data
       - PORT=20128
@@ -169,12 +170,16 @@ Same for the gateways.
 
 | Service | Inside | Published |
 | :--- | :--- | :--- |
-| 9Router | `20128` | `20128` |
-| OmniRoute | `20128` | `20129` |
-| LiteLLM | `4000` | `20130` |
+| 9Router | `20128` | `8081` |
+| OmniRoute | `20128` | `8082` |
+| LiteLLM | `4000` | `8083` |
 | 9RTKSync panel | `9090` | `9091` |
 | OminiRTkSync panel | `9090` | `9092` |
 | LiteLlmRTKSync panel | `9090` | `9093` |
+
+The article stack (`claudegravity`) keeps **`20128`**, 9Router's default port.
+The repository stacks stay out of that range on purpose, so you can run the
+article and all three synchronizers at once without a conflict.
 
 All bound to `127.0.0.1`: the gateway holds real credentials and should not be
 reachable from the local network.
