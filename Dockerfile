@@ -23,7 +23,7 @@ ENV DB_PATH=/app/data/storage.sqlite
 ENV OMNIROUTE_URL=http://127.0.0.1:20128
 ENV SYNC_INTERVAL=300
 ENV REFRESH_MARGIN=900
-ENV WEB_PORT=9191
+ENV WEB_PORT=9090
 ENV WEB_HOST=0.0.0.0
 ENV ENABLE_WEB_DASHBOARD=1
 
@@ -34,10 +34,10 @@ COPY pyproject.toml /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e .
 
-EXPOSE 9191
+EXPOSE 9090
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD /opt/venv/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9191/healthz', timeout=3)" || exit 1
+  CMD /opt/venv/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)" || exit 1
 
 ENTRYPOINT ["/opt/venv/bin/python3", "-m", "omini_rtksync.cli"]
 CMD ["--daemon"]

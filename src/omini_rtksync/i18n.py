@@ -1,0 +1,281 @@
+"""Internacionalização da interface do OminiRTKSync.
+
+Idioma padrão: inglês. Português e espanhol são opcionais e escolhidos pelo
+seletor de bandeiras no topo do painel. A escolha é persistida em SQLite
+(ver prefs.py), então sobrevive a troca de navegador e a limpeza de cache.
+
+Chave ausente numa tradução cai para o inglês, nunca para a chave crua.
+"""
+
+from typing import Dict
+
+DEFAULT_LANGUAGE = "en"
+
+# Código do idioma -> (rótulo nativo, classe de bandeira do flag-icons)
+LANGUAGES: Dict[str, tuple] = {
+    "en": ("English", "fi-us"),
+    "pt": ("Português", "fi-br"),
+    "es": ("Español", "fi-es"),
+}
+
+TRANSLATIONS: Dict[str, Dict[str, str]] = {
+    "en": {
+        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.gateway_unset": "gateway not configured",
+        "action.refresh": "Refresh",
+        "action.access": "Access",
+        "action.sync_now": "Sync now",
+        "action.run_now": "Run now",
+        "action.test_connection": "Test connection",
+        "action.save_credentials": "Save credentials",
+        "action.change_credentials": "Change credentials",
+        "action.close": "Close",
+        "action.refresh_title": "Reload data from the server",
+        "metric.total_connections": "Total connections",
+        "metric.oauth_accounts": "OAuth accounts",
+        "metric.api_keys": "API keys",
+        "metric.combos": "Registered combos",
+        "security.title": "Security warning:",
+        "security.body": "the dashboard still uses the factory default credentials "
+                         "(<code>admin / pathbit</code>). Change the password or set "
+                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> in the environment.",
+        "gateway.title": "Gateway connection",
+        "gateway.gateway": "Gateway",
+        "gateway.status": "Status",
+        "gateway.latency": "Latency",
+        "gateway.database": "SQLite database",
+        "gateway.offline": "OFFLINE",
+        "gateway.no_response": "no response",
+        "cron.title": "Renewal scheduler",
+        "cron.active": "Active · every {interval}s",
+        "cron.disabled": "Disabled (CRON_ENABLED=0)",
+        "cron.last_run": "Last run",
+        "cron.next_run": "Next run",
+        "cron.total_runs": "Total cycles",
+        "cron.total_renewals": "Tokens renewed",
+        "cron.last_result": "Last result",
+        "cron.no_runs": "No cycle has run yet",
+        "cron.result_line": "{inspected} evaluated · {refreshed} renewed ({duration}ms)",
+        "connections.title": "Monitored connections",
+        "connections.empty": "No connection registered on the gateway.",
+        "table.provider": "Provider",
+        "table.name": "Name",
+        "table.type": "Type",
+        "table.status": "Status",
+        "table.remaining": "Time remaining",
+        "table.diagnosis": "Renewal diagnosis",
+        "table.models": "models",
+        "reason.local_ok": "Local instance answered with {count} model(s)",
+        "reason.local_unreachable": "Local instance did not answer the model catalog",
+        "table.combo": "Combo",
+        "table.cascade": "Model cascade",
+        "combos.title": "Resilience combos",
+        "combos.empty": "No fallback combo registered.",
+        "type.oauth": "OAuth 2.0",
+        "type.api_key": "API key",
+        "type.local": "Local",
+        "health.ativo": "Active",
+        "health.expirando_em_breve": "Expiring",
+        "health.expirado": "Expired",
+        "health.rate_limited": "Rate limited",
+        "health.sem_expiracao": "No expiry",
+        "health.desconhecido": "Unknown",
+        "duration.unlimited": "Unlimited / N/A",
+        "duration.expired": "Expired",
+        "reason.api_key": "Static key: never expires, nothing to renew",
+        "reason.no_expiry": "No expiry recorded: will be renewed on the next sweep",
+        "reason.expired": "Token expired: renewal will be attempted on the next sweep",
+        "reason.inside_margin": "Within the {margin} min margin: will be renewed on the next sweep",
+        "reason.outside_margin": "Outside the {margin} min margin: renewal expected in ~{eta}",
+        "auth.title": "Dashboard credentials",
+        "auth.user": "User",
+        "auth.new_password": "New password",
+        "auth.min_chars": "Minimum of 4 characters.",
+        "auth.env_managed": "Credentials come from <code>DASHBOARD_USER</code>/"
+                            "<code>DASHBOARD_PASSWORD</code>. Change them in the environment "
+                            "and restart the service.",
+        "footer.signed_in": "Signed in as",
+        "footer.generated": "Data rendered on the server at",
+        "language.label": "Language",
+    },
+    "pt": {
+        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.gateway_unset": "gateway não configurado",
+        "action.refresh": "Atualizar",
+        "action.access": "Acesso",
+        "action.sync_now": "Sincronizar agora",
+        "action.run_now": "Executar agora",
+        "action.test_connection": "Testar conexão",
+        "action.save_credentials": "Salvar credenciais",
+        "action.change_credentials": "Alterar credenciais",
+        "action.close": "Fechar",
+        "action.refresh_title": "Recarregar os dados do servidor",
+        "metric.total_connections": "Total de conexões",
+        "metric.oauth_accounts": "Contas OAuth",
+        "metric.api_keys": "Chaves de API",
+        "metric.combos": "Combos registrados",
+        "security.title": "Atenção de segurança:",
+        "security.body": "o painel ainda usa as credenciais padrão de fábrica "
+                         "(<code>admin / pathbit</code>). Altere a senha ou defina "
+                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> no ambiente.",
+        "gateway.title": "Conexão com o gateway",
+        "gateway.gateway": "Gateway",
+        "gateway.status": "Status",
+        "gateway.latency": "Latência",
+        "gateway.database": "Banco SQLite",
+        "gateway.offline": "OFFLINE",
+        "gateway.no_response": "sem resposta",
+        "cron.title": "Agendador de renovação",
+        "cron.active": "Ativo · a cada {interval}s",
+        "cron.disabled": "Desativado (CRON_ENABLED=0)",
+        "cron.last_run": "Última execução",
+        "cron.next_run": "Próxima execução",
+        "cron.total_runs": "Ciclos totais",
+        "cron.total_renewals": "Tokens renovados",
+        "cron.last_result": "Último resultado",
+        "cron.no_runs": "Nenhum ciclo executado ainda",
+        "cron.result_line": "{inspected} avaliadas · {refreshed} renovadas ({duration}ms)",
+        "connections.title": "Conexões monitoradas",
+        "connections.empty": "Nenhuma conexão registrada no gateway.",
+        "table.provider": "Provedor",
+        "table.name": "Nome",
+        "table.type": "Tipo",
+        "table.status": "Status",
+        "table.remaining": "Validade restante",
+        "table.diagnosis": "Diagnóstico da renovação",
+        "table.models": "modelos",
+        "reason.local_ok": "Instância local respondeu com {count} modelo(s)",
+        "reason.local_unreachable": "Instância local não respondeu ao catálogo de modelos",
+        "table.combo": "Combo",
+        "table.cascade": "Cascata de modelos",
+        "combos.title": "Combos de resiliência",
+        "combos.empty": "Nenhum combo de fallback registrado.",
+        "type.oauth": "OAuth 2.0",
+        "type.api_key": "Chave de API",
+        "type.local": "Local",
+        "health.ativo": "Ativo",
+        "health.expirando_em_breve": "Expirando",
+        "health.expirado": "Expirado",
+        "health.rate_limited": "Rate limit",
+        "health.sem_expiracao": "Sem expiração",
+        "health.desconhecido": "Desconhecido",
+        "duration.unlimited": "Ilimitado / N/A",
+        "duration.expired": "Expirado",
+        "reason.api_key": "Chave estática: não expira, nada a renovar",
+        "reason.no_expiry": "Sem expiração registrada: será renovada na próxima varredura",
+        "reason.expired": "Token expirado: renovação será tentada na próxima varredura",
+        "reason.inside_margin": "Dentro da margem de {margin} min: será renovada na próxima varredura",
+        "reason.outside_margin": "Fora da margem de {margin} min: renovação prevista em ~{eta}",
+        "auth.title": "Credenciais do painel",
+        "auth.user": "Usuário",
+        "auth.new_password": "Nova senha",
+        "auth.min_chars": "Mínimo de 4 caracteres.",
+        "auth.env_managed": "As credenciais vêm de <code>DASHBOARD_USER</code>/"
+                            "<code>DASHBOARD_PASSWORD</code>. Altere-as no ambiente "
+                            "e reinicie o serviço.",
+        "footer.signed_in": "Autenticado como",
+        "footer.generated": "Dados gerados no servidor em",
+        "language.label": "Idioma",
+    },
+    "es": {
+        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.gateway_unset": "gateway no configurado",
+        "action.refresh": "Actualizar",
+        "action.access": "Acceso",
+        "action.sync_now": "Sincronizar ahora",
+        "action.run_now": "Ejecutar ahora",
+        "action.test_connection": "Probar conexión",
+        "action.save_credentials": "Guardar credenciales",
+        "action.change_credentials": "Cambiar credenciales",
+        "action.close": "Cerrar",
+        "action.refresh_title": "Recargar los datos del servidor",
+        "metric.total_connections": "Conexiones totales",
+        "metric.oauth_accounts": "Cuentas OAuth",
+        "metric.api_keys": "Claves de API",
+        "metric.combos": "Combos registrados",
+        "security.title": "Aviso de seguridad:",
+        "security.body": "el panel todavía usa las credenciales de fábrica "
+                         "(<code>admin / pathbit</code>). Cambie la contraseña o defina "
+                         "<code>DASHBOARD_USER</code>/<code>DASHBOARD_PASSWORD</code> en el entorno.",
+        "gateway.title": "Conexión con el gateway",
+        "gateway.gateway": "Gateway",
+        "gateway.status": "Estado",
+        "gateway.latency": "Latencia",
+        "gateway.database": "Base de datos SQLite",
+        "gateway.offline": "DESCONECTADO",
+        "gateway.no_response": "sin respuesta",
+        "cron.title": "Programador de renovación",
+        "cron.active": "Activo · cada {interval}s",
+        "cron.disabled": "Desactivado (CRON_ENABLED=0)",
+        "cron.last_run": "Última ejecución",
+        "cron.next_run": "Próxima ejecución",
+        "cron.total_runs": "Ciclos totales",
+        "cron.total_renewals": "Tokens renovados",
+        "cron.last_result": "Último resultado",
+        "cron.no_runs": "Aún no se ejecutó ningún ciclo",
+        "cron.result_line": "{inspected} evaluadas · {refreshed} renovadas ({duration}ms)",
+        "connections.title": "Conexiones monitoreadas",
+        "connections.empty": "No hay conexiones registradas en el gateway.",
+        "table.provider": "Proveedor",
+        "table.name": "Nombre",
+        "table.type": "Tipo",
+        "table.status": "Estado",
+        "table.remaining": "Validez restante",
+        "table.diagnosis": "Diagnóstico de la renovación",
+        "table.models": "modelos",
+        "reason.local_ok": "La instancia local respondió con {count} modelo(s)",
+        "reason.local_unreachable": "La instancia local no respondió al catálogo de modelos",
+        "table.combo": "Combo",
+        "table.cascade": "Cascada de modelos",
+        "combos.title": "Combos de resiliencia",
+        "combos.empty": "No hay combos de respaldo registrados.",
+        "type.oauth": "OAuth 2.0",
+        "type.api_key": "Clave de API",
+        "type.local": "Local",
+        "health.ativo": "Activo",
+        "health.expirando_em_breve": "Por expirar",
+        "health.expirado": "Expirado",
+        "health.rate_limited": "Límite de tasa",
+        "health.sem_expiracao": "Sin expiración",
+        "health.desconhecido": "Desconocido",
+        "duration.unlimited": "Ilimitado / N/D",
+        "duration.expired": "Expirado",
+        "reason.api_key": "Clave estática: no expira, nada que renovar",
+        "reason.no_expiry": "Sin expiración registrada: se renovará en el próximo barrido",
+        "reason.expired": "Token expirado: se intentará renovar en el próximo barrido",
+        "reason.inside_margin": "Dentro del margen de {margin} min: se renovará en el próximo barrido",
+        "reason.outside_margin": "Fuera del margen de {margin} min: renovación prevista en ~{eta}",
+        "auth.title": "Credenciales del panel",
+        "auth.user": "Usuario",
+        "auth.new_password": "Nueva contraseña",
+        "auth.min_chars": "Mínimo de 4 caracteres.",
+        "auth.env_managed": "Las credenciales vienen de <code>DASHBOARD_USER</code>/"
+                            "<code>DASHBOARD_PASSWORD</code>. Cámbielas en el entorno "
+                            "y reinicie el servicio.",
+        "footer.signed_in": "Autenticado como",
+        "footer.generated": "Datos generados en el servidor a las",
+        "language.label": "Idioma",
+    },
+}
+
+
+def normalize_language(code: str) -> str:
+    """Normaliza um código de idioma para um dos suportados, caindo no padrão."""
+    if not code:
+        return DEFAULT_LANGUAGE
+    base = str(code).strip().lower().replace("_", "-").split("-")[0]
+    return base if base in LANGUAGES else DEFAULT_LANGUAGE
+
+
+def translate(key: str, lang: str = DEFAULT_LANGUAGE, **params) -> str:
+    """Traduz uma chave, com fallback para inglês e interpolação opcional."""
+    lang = normalize_language(lang)
+    text = TRANSLATIONS.get(lang, {}).get(key)
+    if text is None:
+        text = TRANSLATIONS[DEFAULT_LANGUAGE].get(key, key)
+    if params:
+        try:
+            return text.format(**params)
+        except (KeyError, IndexError):
+            return text
+    return text

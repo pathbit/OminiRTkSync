@@ -1,4 +1,4 @@
-"""OminiRTKSync · OminiRoute Universal Token & Connection Synchronizer.
+"""OminiRTKSync: OmniRoute Universal Token & Connection Sync.
 
 Specialized token keeper, health validator and auto-healer for OmniRoute AI Gateways
 (https://github.com/diegosouzapw/OmniRoute).
@@ -9,4 +9,3 @@ __author__ = "Eliel Sousa"
 __email__ = "eliel@pathbit.co"
 
 __all__ = ["__version__", "__author__", "__email__"]
-
