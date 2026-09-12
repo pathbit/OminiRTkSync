@@ -190,11 +190,15 @@ class ConnectionRecord:
             return "active" if estado in ("active", "ok", "success") else "not_checked"
 
         if self.is_oauth:
-            # O gateway já pode ter carimbado a conexão como recusada. Sem uma
-            # sonda viva que diga o contrário, o carimbo dele é a melhor
-            # informação que existe — e ignorá-lo mostrava como saudável uma
-            # credencial que o próprio OmniRoute sabe estar quebrada.
-            if self.data.get("testStatus") in ("invalid", "error", "failed"):
+            # O gateway já pode ter carimbado a conexão como recusada. **Sem uma
+            # sonda viva que diga o contrário**, o carimbo dele é a melhor
+            # informação que existe — ignorá-lo mostrava como saudável uma
+            # credencial que o próprio OmniRoute sabe estar quebrada. Mas uma
+            # validação viva vence tudo: o carimbo é do último erro do gateway
+            # e não caduca sozinho, então honrá-lo mesmo depois de a sonda
+            # aprovar a credencial repetia, ao contrário, a própria contradição
+            # entre tela e banco que este arquivo existe para evitar.
+            if probed != "valid" and self.data.get("testStatus") in ("invalid", "error", "failed"):
                 return "invalid"
             remaining = self.remaining_seconds
             if remaining is None:

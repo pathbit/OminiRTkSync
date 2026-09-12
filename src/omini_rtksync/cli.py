@@ -165,8 +165,16 @@ class OmniSyncEngine:
                         # Recusado é motivo para renovar agora, não daqui a pouco.
                         rem_sec = 0
                     elif veredito.state == STATE_VALID:
+                        # Gravar só o resultado da sonda deixava para trás o
+                        # `test_status='invalid'` de uma falha anterior, que não
+                        # caduca sozinho. 'active' é o único valor que o
+                        # OmniRoute trata como saudável (clearAccountError), e é
+                        # o que a credencial acabou de provar que é.
                         update_connection_health(
-                            self.settings.db_path, cid, credential_state=veredito.state
+                            self.settings.db_path,
+                            cid,
+                            test_status="active",
+                            credential_state=veredito.state,
                         )
 
                 if rem_sec <= self.settings.refresh_margin or not c.get("accessToken"):

@@ -102,6 +102,24 @@ class TestCarimboDoGatewayVale(unittest.TestCase):
             "o gateway ja sabe que a credencial esta quebrada; ignorar isso mostra saude falsa",
         )
 
+    def test_a_live_probe_outranks_a_stale_gateway_stamp(self):
+        # `test_status` guarda o ultimo erro do gateway e nao caduca sozinho.
+        # Depois que a sonda viva aprova a credencial, insistir no carimbo
+        # antigo repetia, ao contrario, a contradicao entre tela e banco.
+        c = conexao(
+            provider="github",
+            accessToken="tok",
+            isOAuth=True,
+            expiresAt=agora_mais(7200),
+            testStatus="invalid",
+            credentialState="valid",
+        )
+        self.assertEqual(
+            c.health_status,
+            "active",
+            "a validacao viva vence o carimbo velho do gateway",
+        )
+
     def test_a_healthy_oauth_connection_is_still_active(self):
         c = conexao(
             provider="github",
