@@ -13,9 +13,14 @@ services:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_BASE_URL=http://localhost:20128
       - NODE_ENV=production
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-PathbitDevs2026!}
-      - JWT_SECRET=${JWT_SECRET:-omniroute-jwt-secret-key-pathbit}
+      # Sem valor de fallback: um default publicado em arquivo de exemplo vira
+      # a senha real de toda implantacao que so copiou e colou. O compose
+      # recusa subir ate que as duas variaveis estejam definidas no .env.
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?defina INITIAL_PASSWORD no .env}
+      - JWT_SECRET=${JWT_SECRET:?defina JWT_SECRET no .env (openssl rand -hex 32)}
       - REQUIRE_API_KEY=false
+      # REQUIRE_LOGIN=false so e aceitavel porque a porta acima esta presa em
+      # 127.0.0.1. Ao expor 20128 na rede, mude para true.
       - REQUIRE_LOGIN=false
     volumes:
       - omniroute_data:/app/data

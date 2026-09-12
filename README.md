@@ -63,8 +63,8 @@ services:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_BASE_URL=http://localhost:20128
       - NODE_ENV=production
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-PathbitDevs2026!}
-      - JWT_SECRET=${JWT_SECRET:-omniroute-jwt-secret-key-pathbit}
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?defina no .env}
+      - JWT_SECRET=${JWT_SECRET:?openssl rand -hex 32}
       - REQUIRE_API_KEY=false
       - REQUIRE_LOGIN=false
     volumes:

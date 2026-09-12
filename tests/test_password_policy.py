@@ -17,7 +17,7 @@ from omini_rtksync.prefs import resolve_prefs_path
 
 class TestPasswordStrength(unittest.TestCase):
     def test_accepts_a_password_meeting_every_rule(self):
-        self.assertEqual(validate_password_strength("Pathbit1!"), [])
+        self.assertEqual(validate_password_strength("Sample1!"), [])
 
     def test_reports_every_broken_rule_at_once(self):
         """Uma regra por tentativa faria o usuario adivinhar a politica aos poucos."""
@@ -43,14 +43,14 @@ class TestPasswordStrength(unittest.TestCase):
 
 class TestPasswordHashing(unittest.TestCase):
     def test_hash_is_salted_so_two_hashes_never_match(self):
-        self.assertNotEqual(hash_password("Pathbit1!"), hash_password("Pathbit1!"))
+        self.assertNotEqual(hash_password("Sample1!"), hash_password("Sample1!"))
 
     def test_the_password_never_appears_in_the_stored_value(self):
-        self.assertNotIn("Pathbit1!", hash_password("Pathbit1!"))
+        self.assertNotIn("Sample1!", hash_password("Sample1!"))
 
     def test_matching_and_non_matching(self):
-        stored = hash_password("Pathbit1!")
-        self.assertTrue(password_matches(stored, "Pathbit1!"))
+        stored = hash_password("Sample1!")
+        self.assertTrue(password_matches(stored, "Sample1!"))
         self.assertFalse(password_matches(stored, "Pathbit1"))
         self.assertFalse(password_matches(stored, ""))
 
@@ -75,7 +75,7 @@ class TestCredentialsInSqlite(unittest.TestCase):
         self.assertFalse(self.settings.has_stored_password())
 
     def test_the_banner_disappears_once_a_password_is_stored(self):
-        self.assertTrue(self.settings.update_auth_credentials("admin", "Pathbit1!"))
+        self.assertTrue(self.settings.update_auth_credentials("admin", "Sample1!"))
         self.assertTrue(self.settings.has_stored_password())
         self.assertFalse(self.settings.is_default_password())
 
@@ -85,31 +85,31 @@ class TestCredentialsInSqlite(unittest.TestCase):
         self.assertTrue(self.settings.is_default_password())
 
     def test_the_stored_password_authenticates_and_the_old_one_stops(self):
-        self.settings.update_auth_credentials("admin", "Pathbit1!")
-        self.assertTrue(self.settings.verify_credentials("admin", "Pathbit1!"))
+        self.settings.update_auth_credentials("admin", "Sample1!")
+        self.assertTrue(self.settings.verify_credentials("admin", "Sample1!"))
         self.assertFalse(self.settings.verify_credentials("admin", "pathbit"))
 
     def test_the_password_is_never_written_in_clear_text(self):
-        self.settings.update_auth_credentials("admin", "Pathbit1!")
+        self.settings.update_auth_credentials("admin", "Sample1!")
         prefs = resolve_prefs_path(os.path.dirname(self.db_path))
         with open(prefs, "rb") as handle:
             raw = handle.read()
-        self.assertNotIn(b"Pathbit1!", raw)
+        self.assertNotIn(b"Sample1!", raw)
 
     def test_headless_mode_refuses_to_write(self):
         """Com a senha vindo do ambiente, gravar aqui criaria estado que ninguem le."""
         headless = Settings(db_path=self.db_path, dashboard_auth_from_env=True)
-        self.assertFalse(headless.update_auth_credentials("admin", "Pathbit1!"))
+        self.assertFalse(headless.update_auth_credentials("admin", "Sample1!"))
         # E o banner nao aparece: quem opera o ambiente ja controla o segredo.
         self.assertFalse(headless.is_default_password())
 
     def test_credentials_round_trip_through_the_database(self):
         prefs = resolve_prefs_path(self.tmp.name)
         self.assertIsNone(read_db_credentials(prefs))
-        self.assertTrue(write_db_credentials(prefs, "operador", "Pathbit1!"))
+        self.assertTrue(write_db_credentials(prefs, "operador", "Sample1!"))
         user, stored = read_db_credentials(prefs)
         self.assertEqual(user, "operador")
-        self.assertTrue(password_matches(stored, "Pathbit1!"))
+        self.assertTrue(password_matches(stored, "Sample1!"))
 
 
 class TestNoFactoryPassword(unittest.TestCase):
