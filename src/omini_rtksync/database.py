@@ -26,6 +26,19 @@ def detect_connection_table(conn: sqlite3.Connection) -> str:
     return "provider_connections"
 
 
+def _decode_json(value: Any) -> Optional[Dict[str, Any]]:
+    """Le uma coluna JSON tolerando texto vazio, NULL e dicionario ja decodificado."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return None
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
     """Carrega todas as conexões cadastradas no OmniRoute."""
     conn = get_db_connection(db_path)
@@ -49,6 +62,7 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
             test_status = item.get("test_status") or item.get("testStatus") or "active"
 
             # Se houver campo JSON 'data' (formato 9Router), funde os campos
+            extra: Dict[str, Any] = {}
             if "data" in keys and isinstance(item["data"], str):
                 try:
                     d = json.loads(item["data"])
@@ -57,8 +71,15 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
                     api_key = api_key or d.get("apiKey")
                     expires_at = expires_at or d.get("expiresAt")
                     test_status = test_status or d.get("testStatus")
+                    if isinstance(d, dict):
+                        extra = d
                 except Exception:
                     pass
+
+            # provider_specific_data e onde o OmniRoute guarda baseUrl e afins.
+            specific = _decode_json(item.get("provider_specific_data")) or _decode_json(
+                extra.get("providerSpecificData")
+            )
 
             result.append({
                 "id": str(item["id"]),
@@ -71,7 +92,22 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
                 "testStatus": test_status,
                 "isOAuth": bool(access_token or refresh_token),
                 "hasApiKey": bool(api_key),
-                "raw": item,
+                # Campos de saude, projetados um a um. A linha crua do banco NAO
+                # e devolvida: ela carrega access_token, refresh_token e api_key,
+                # e qualquer consumidor que a serializasse por engano publicaria
+                # as tres coisas de uma vez.
+                "providerSpecificData": specific,
+                "baseUrl": (specific or {}).get("baseUrl") or (specific or {}).get("baseURL"),
+                "discoveredModels": (specific or {}).get("discoveredModels")
+                or extra.get("discoveredModels")
+                or [],
+                "credentialState": (specific or {}).get("credentialState")
+                or extra.get("credentialState"),
+                "lastTested": item.get("last_tested") or extra.get("lastTested"),
+                "lastHealthCheckAt": item.get("last_health_check_at"),
+                "rateLimitedUntil": item.get("rate_limited_until") or extra.get("rateLimitedUntil"),
+                "lastError": item.get("last_error"),
+                "updatedAt": item.get("updated_at") or item.get("updatedAt"),
             })
         return result
     finally:
@@ -167,6 +203,82 @@ def update_connection(
                 f"UPDATE {tbl} SET data = ?, updatedAt = ? WHERE id = ?",
                 (json.dumps(d), now_iso, connection_id),
             )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def update_connection_health(
+    db_path: str,
+    connection_id: str,
+    *,
+    test_status: Optional[str] = None,
+    credential_state: Optional[str] = None,
+    discovered_models: Optional[List[str]] = None,
+    last_error: Optional[str] = None,
+    clear_rate_limit: bool = False,
+) -> bool:
+    """Grava o resultado de uma sondagem, sem tocar em token nenhum.
+
+    Antes disto o provider devolvia `testStatus`, `credentialState` e o catalogo
+    descoberto, e o motor jogava tudo fora: o painel recarregava a linha antiga e
+    nunca mostrava que uma chave havia sido recusada nem que a instancia local
+    estava fora do ar.
+
+    Só escreve em coluna que existe no banco — o schema do OmniRoute evolui entre
+    versões, e uma instalação mais antiga não pode quebrar por causa disso.
+    """
+    conn = get_db_connection(db_path)
+    try:
+        tbl = detect_connection_table(conn)
+        cursor = conn.cursor()
+        cols = {c[1] for c in cursor.execute(f"PRAGMA table_info({tbl})")}
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+        campos: List[str] = []
+        valores: List[Any] = []
+
+        if test_status and "test_status" in cols:
+            campos.append("test_status = ?")
+            valores.append(test_status)
+        if "last_tested" in cols:
+            campos.append("last_tested = ?")
+            valores.append(now_iso)
+        if "last_health_check_at" in cols:
+            campos.append("last_health_check_at = ?")
+            valores.append(now_iso)
+        if last_error is not None and "last_error" in cols:
+            campos.append("last_error = ?")
+            valores.append(last_error or None)
+        if clear_rate_limit and "rate_limited_until" in cols:
+            campos.append("rate_limited_until = ?")
+            valores.append(None)
+
+        # credentialState e o catalogo local nao tem coluna propria: vao para o
+        # JSON de provider_specific_data, preservando o que ja estava la.
+        if (credential_state or discovered_models is not None) and "provider_specific_data" in cols:
+            cursor.execute(f"SELECT provider_specific_data FROM {tbl} WHERE id = ?", (connection_id,))
+            linha = cursor.fetchone()
+            atual = _decode_json(linha["provider_specific_data"]) if linha else None
+            atual = dict(atual or {})
+            if credential_state:
+                atual["credentialState"] = credential_state
+                atual["credentialCheckedAt"] = now_iso
+            if discovered_models is not None:
+                atual["discoveredModels"] = discovered_models
+            campos.append("provider_specific_data = ?")
+            valores.append(json.dumps(atual))
+
+        if "updated_at" in cols:
+            campos.append("updated_at = ?")
+            valores.append(now_iso)
+
+        if not campos:
+            return False
+
+        valores.append(connection_id)
+        cursor.execute(f"UPDATE {tbl} SET {', '.join(campos)} WHERE id = ?", valores)
         conn.commit()
         return cursor.rowcount > 0
     finally:

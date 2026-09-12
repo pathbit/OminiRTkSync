@@ -4,10 +4,8 @@ Nenhum teste aqui toca a rede: todo probe recebe um opener falso. Foi um teste
 que dependia de um servico real que derrubou a CI antes.
 """
 
-import json
 import unittest
 import urllib.error
-from typing import Optional
 
 from omini_rtksync import credential_check as cc
 from omini_rtksync.models import ConnectionRecord

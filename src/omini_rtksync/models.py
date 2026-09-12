@@ -85,12 +85,9 @@ class ConnectionRecord:
             nested = specific.get("baseUrl") or specific.get("baseURL")
             if nested:
                 return nested
-        raw = self.data.get("raw") or {}
         return (
             self.data.get("baseUrl")
             or self.data.get("base_url")
-            or raw.get("base_url")
-            or raw.get("baseUrl")
             or None
         )
 

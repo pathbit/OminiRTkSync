@@ -208,11 +208,20 @@ class ApiKeyProvider:
         self.opener = opener
 
     def can_handle(self, conn: Dict[str, Any]) -> bool:
-        return bool(conn.get("hasApiKey"))
+        # Uma instancia local carrega uma chave de fachada, entao `hasApiKey`
+        # sozinho tambem casaria com ela. Como o motor consulta este provider
+        # antes do LocalProvider, o catalogo local nunca seria descoberto -- e
+        # por isso que o Ollama local aparecia sem modelo nenhum no painel.
+        return bool(conn.get("hasApiKey")) and not LocalProvider.is_local_connection(conn)
 
     def check_and_refresh(self, conn: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
         messages = []
+        # `modified` decide se vale gravar; `renewed` decide se conta como
+        # renovacao no resumo do ciclo. Carimbar o horario de uma verificacao
+        # muda a linha, mas nao renovou credencial nenhuma -- e contar isso
+        # inflava o "N renovadas" do cron.
         modified = False
+        renewed = False
         res = dict(conn)
         provider = conn.get("provider", "")
 
@@ -222,6 +231,7 @@ class ApiKeyProvider:
             if local and local.get("apiKey") and local.get("apiKey") != conn.get("apiKey"):
                 res["apiKey"] = local["apiKey"]
                 modified = True
+                renewed = True
                 src = local.get("source_path", "host")
                 messages.append(f"Chave de API sincronizada a partir do host ({src})")
 
@@ -251,7 +261,7 @@ class ApiKeyProvider:
         if not messages:
             messages.append("Chave de API inalterada")
 
-        return modified, res if modified else None, messages
+        return renewed, res if modified else None, messages
 
 
 # Catalog endpoints, in attempt order: Ollama-native and the OpenAI standard.
@@ -267,15 +277,28 @@ class LocalProvider:
 
     @staticmethod
     def _base_url(conn: Dict[str, Any]) -> str:
-        raw = conn.get("raw") or {}
-        return str(conn.get("baseUrl") or raw.get("base_url") or raw.get("baseUrl") or "")
+        especifico = conn.get("providerSpecificData") or {}
+        return str(
+            conn.get("baseUrl")
+            or especifico.get("baseUrl")
+            or especifico.get("baseURL")
+            or ""
+        )
 
-    def can_handle(self, conn: Dict[str, Any]) -> bool:
+    @classmethod
+    def is_local_connection(cls, conn: Dict[str, Any]) -> bool:
+        """Classificacao de "local" compartilhada, para os providers nao brigarem."""
         provider = str(conn.get("provider", "")).lower()
+        if any(host in cls._base_url(conn) for host in LOCAL_HOSTS):
+            return True
         if any(marker in provider for marker in LOCAL_PROVIDER_MARKERS):
             return True
-        if any(host in self._base_url(conn) for host in LOCAL_HOSTS):
+        return False
+
+    def can_handle(self, conn: Dict[str, Any]) -> bool:
+        if self.is_local_connection(conn):
             return True
+        # Sem token e sem chave nao ha o que outro provider faca com a conexao.
         return not (conn.get("isOAuth") or conn.get("hasApiKey"))
 
     def discover_models(self, base_url: str, api_key: str = "") -> Tuple[List[str], str]:
@@ -287,6 +310,7 @@ class LocalProvider:
         # An OpenAI-shaped baseUrl already ends in /v1; the root serves /api/tags.
         origin = root[: -len("/v1")] if root.endswith("/v1") else root
         last_error = ""
+        answered = False
 
         for path in MODEL_CATALOG_PATHS:
             target = f"{origin}{path}" if path.startswith("/api") else f"{root}{path}"
@@ -310,10 +334,15 @@ class LocalProvider:
                 last_error = str(e)
                 continue
 
+            # Chegar aqui significa resposta HTTP valida e JSON parseavel: o
+            # servico esta de pe, tendo modelo ou nao.
+            answered = True
             models = self._extract_model_names(payload)
             if models:
                 return models, ""
 
+        if answered:
+            return [], ""
         return [], last_error or "no model returned by the local instance"
 
     @staticmethod
@@ -333,19 +362,34 @@ class LocalProvider:
         return names
 
     def check_and_refresh(self, conn: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
+        """Sonda a instancia local.
+
+        O primeiro elemento e a contagem de renovacao do ciclo: uma sondagem
+        nunca renova credencial, entao e sempre False. O dicionario devolvido e
+        o que deve ser gravado.
+        """
         models, probe_error = self.discover_models(self._base_url(conn), conn.get("apiKey") or "")
 
         if models:
             return (
-                True,
+                False,
                 {"discoveredModels": models, "testStatus": "active"},
                 [f"Local instance answered with {len(models)} model(s): {', '.join(models[:5])}"],
+            )
+
+        # Erro vazio significa que a instancia respondeu com catalogo vazio --
+        # instalacao nova, sem modelo baixado. Esta no ar.
+        if not probe_error:
+            return (
+                False,
+                {"discoveredModels": [], "testStatus": "active"},
+                ["Local instance answered with an empty model catalog"],
             )
 
         # With no catalog response the connection is not assumed healthy: this is
         # exactly the "the local Ollama went down and nobody noticed" case.
         return (
-            True,
+            False,
             {"testStatus": "unreachable", "lastError": probe_error},
             [f"Local instance did not answer the model catalog: {probe_error}"],
         )

@@ -80,7 +80,7 @@ class TestHealthzResilience(unittest.TestCase):
         for _ in range(2):
             with urllib.request.urlopen(f"http://127.0.0.1:{19391}/healthz", timeout=5) as resp:
                 self.assertEqual(resp.status, 200)
-        self.assertTrue(self.server.socket.fileno() > 0)
+        self.assertGreater(self.server.socket.fileno(), 0)
 
     def test_client_disconnect_does_not_crash_the_server(self):
         """O probe do Docker fecha o socket cedo; isso não pode virar traceback nem derrubar o servidor."""

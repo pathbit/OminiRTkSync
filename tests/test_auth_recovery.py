@@ -7,7 +7,6 @@ import tempfile
 import pathlib
 import unittest
 
-from omini_rtksync.cli import *  # noqa
 from omini_rtksync import cli as omini_rtksync_cli
 from unittest import mock
 

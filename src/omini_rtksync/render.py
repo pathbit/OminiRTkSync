@@ -121,6 +121,8 @@ def render_last_refresh(conn: Any, lang: str) -> str:
         if elapsed >= 0:
             ago = translate("table.time_ago", lang, elapsed=format_duration(elapsed, lang))
     except (ValueError, TypeError):
+        # Carimbo de tempo em formato desconhecido vira "sem informacao" na
+        # tela. Uma data ilegivel nao pode derrubar a renderizacao da pagina.
         pass
 
     icon = '<i class="bi bi-arrow-repeat me-1 text-success" aria-hidden="true"></i>'
@@ -453,7 +455,8 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
 def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str:
     online = bool(gateway.get("online"))
     tone = "text-success" if online else "text-danger"
-    db_ok = bool(gateway.get("dbSummary"))
+    # Le a bandeira; o resumo textual nunca serve como booleano.
+    db_ok = bool(gateway.get("dbOk"))
     if online and db_ok:
         diagnosis = translate("gateway.diag_ok", lang)
     elif online:

@@ -1,7 +1,6 @@
 """Testes da renderização server-side do dashboard."""
 
 import base64
-import json
 import os
 import re
 import sqlite3

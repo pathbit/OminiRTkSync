@@ -114,6 +114,10 @@ def _classify(status: int, spec_invalid: tuple = ()) -> str:
         return STATE_INVALID
     if status == 429:
         return STATE_RATE_LIMITED
+    # 5xx nao prova nada sobre a credencial: o provedor e que esta com problema.
+    # Tratar como valido carimbava "ativo" numa chave que nunca foi verificada.
+    if status >= 500:
+        return STATE_UNREACHABLE
     return STATE_VALID
 
 
@@ -162,6 +166,14 @@ def _execute(
 SELF_HOSTED_MARKERS = ("openai-compatible", "-local", "localai")
 
 
+def _same_host(a: str, b: str) -> bool:
+    """Whether two URLs point at the same host (port included)."""
+    try:
+        return urllib.parse.urlparse(a).netloc.lower() == urllib.parse.urlparse(b).netloc.lower()
+    except Exception:
+        return False
+
+
 def select_probe(provider: str) -> Optional[ProbeSpec]:
     """Pick the probe for a provider name, preferring the most specific marker.
 
@@ -191,6 +203,14 @@ def check_api_key(
         return CheckResult(state=STATE_UNSUPPORTED, detail="No API key", checked_at=_now_iso())
 
     spec = select_probe(provider)
+
+    # Um endereco declarado na conexao manda mais do que o nome do provedor.
+    # "azure-openai" casa com "openai" por substring, e um "anthropic" atras de
+    # proxy tambem casa: sem esta checagem a chave do cliente sairia daqui para
+    # api.openai.com ou api.anthropic.com, que nao e para onde ela deveria ir.
+    if spec is not None and base_url and not _same_host(base_url, spec.url):
+        spec = ProbeSpec(base_url.rstrip("/") + "/models")
+
     if spec is None:
         if not base_url:
             return CheckResult(

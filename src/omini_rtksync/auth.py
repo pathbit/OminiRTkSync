@@ -113,11 +113,20 @@ def read_stored_credentials(auth_file: str) -> Optional[Tuple[str, str]]:
     try:
         with open(auth_file, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if not isinstance(data, dict):
+            # Arquivo sintaticamente valido mas com forma errada -- "[]", um
+            # numero, uma string. Sem esta guarda o .get abaixo levantava
+            # AttributeError, que subia ate o handler HTTP e trancava para fora
+            # tanto a credencial configurada quanto a de recuperacao.
+            return None
         user = data.get("user")
         password = data.get("password")
         if user and password:
             return str(user), str(password)
     except (OSError, ValueError):
+        # Arquivo ausente, ilegivel ou com JSON quebrado equivale a "sem
+        # credencial gravada": quem chama cai para o ambiente ou para a
+        # credencial de recuperacao.
         pass
     return None
 
@@ -160,6 +169,9 @@ def resolve_recovery_hash(recovery_file: str) -> str:
             if saved:
                 return saved
         except OSError:
+            # Disco cheio, permissao negada, arquivo removido no meio do
+            # caminho: tratado como "nao ha credencial de recuperacao", que e
+            # exatamente o estado em que a autenticacao normal decide sozinha.
             pass
 
     return ""

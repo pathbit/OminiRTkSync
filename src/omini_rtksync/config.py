@@ -115,7 +115,19 @@ class Settings:
         base_dir = os.environ.get("DATA_DIR", "")
         if not base_dir and self.db_path:
             base_dir = os.path.dirname(self.db_path)
-        if not base_dir or not os.path.exists(base_dir):
+        # O diretorio e CRIADO, nao contornado. No primeiro boot ele ainda nao
+        # existe -- o gateway e quem o cria ao subir -- e cair para $HOME
+        # gravava o banco de preferencias, com a senha do painel dentro, fora do
+        # volume de dados: a senha sumia ao recriar o container, e o painel
+        # voltava a pedir a credencial de recuperacao.
+        if base_dir:
+            try:
+                os.makedirs(base_dir, exist_ok=True)
+            except OSError:
+                # Caminho somente leitura ou invalido: ai sim nao ha onde
+                # gravar, e $HOME e o unico lugar que resta.
+                base_dir = ""
+        if not base_dir or not os.path.isdir(base_dir):
             base_dir = os.path.expanduser("~")
         return os.path.join(base_dir, ".dashboard_auth.json")
 
@@ -143,7 +155,7 @@ class Settings:
         """Se o painel ainda roda sem senha própria.
 
         O aviso de segurança depende disto: ele some assim que existe uma senha
-        gravada no SQLite, e não quando o texto deixa de ser "pathbit".
+        gravada no SQLite, e não pela comparação com um texto fixo qualquer.
         """
         return not self.has_stored_password()
 
@@ -176,6 +188,9 @@ class Settings:
         try:
             os.remove(self.get_auth_file_path())
         except OSError:
+            # O arquivo ja pode nao existir -- e o caso comum, porque a senha
+            # nasce direto no banco. Falhar aqui reverteria uma troca de senha
+            # que ja deu certo.
             pass
         return True
 

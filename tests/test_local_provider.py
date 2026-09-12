@@ -74,8 +74,11 @@ class TestCheckAndRefresh(unittest.TestCase):
 
     def test_reachable_instance_records_its_models(self):
         with mock.patch.object(LocalProvider, "discover_models", return_value=(["llama3.2:3b"], "")):
-            modified, data, messages = self.provider.check_and_refresh(self.conn)
-        self.assertTrue(modified)
+            renewed, data, messages = self.provider.check_and_refresh(self.conn)
+        # Sondagem local nao conta como renovacao de credencial; o que prova que
+        # funcionou e o dicionario devolvido para gravacao.
+        self.assertFalse(renewed)
+        self.assertIsNotNone(data)
         self.assertEqual(data["discoveredModels"], ["llama3.2:3b"])
         # 'active' is the only value OmniRoute treats as healthy.
         self.assertEqual(data["testStatus"], "active")
@@ -83,8 +86,9 @@ class TestCheckAndRefresh(unittest.TestCase):
 
     def test_unreachable_instance_is_not_assumed_healthy(self):
         with mock.patch.object(LocalProvider, "discover_models", return_value=([], "Connection refused")):
-            modified, data, messages = self.provider.check_and_refresh(self.conn)
-        self.assertTrue(modified)
+            renewed, data, messages = self.provider.check_and_refresh(self.conn)
+        self.assertFalse(renewed)
+        self.assertIsNotNone(data)
         self.assertEqual(data["testStatus"], "unreachable")
         self.assertEqual(data["lastError"], "Connection refused")
         self.assertIn("did not answer", messages[0])

@@ -24,6 +24,19 @@ services:
       - REQUIRE_LOGIN=false
     volumes:
       - omniroute_data:/app/data
+    # Sem este healthcheck o `condition: service_healthy` la embaixo nao tem o
+    # que esperar, e o compose recusa subir a stack inteira dizendo que a
+    # dependencia nao declara healthcheck.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "require('http').get('http://127.0.0.1:20128/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # O primeiro boot roda as migracoes e cria o storage.sqlite; da folga.
+      start_period: 40s
 
   ominirtksync:
     image: ghcr.io/pathbit/ominirtksync:latest

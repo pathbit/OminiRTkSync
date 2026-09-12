@@ -1218,3 +1218,21 @@ temp/
 
 ### NOT IGNORE
 !.vscode/
+
+# --- Artefatos de execucao do RTKSync (acrescentado ao final; o conteudo acima
+# --- permanece exatamente como estava) ---
+# O SQLite e criado no startup do proprio projeto: e estado de execucao, nunca
+# fonte. Versiona-lo publicaria conexoes, tokens e chaves de quem rodou.
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+# Credenciais do painel: o hash de recuperacao e a senha em texto herdada.
+.dashboard_recovery
+.dashboard_auth.json
+# Log persistente: pode conter endereco, nome de conexao e mensagem de erro.
+*.log
+logs/
+# Clones do upstream para leitura (9router, OmniRoute, litellm).
+tmp/

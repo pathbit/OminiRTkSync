@@ -4,10 +4,13 @@ import argparse
 import os
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
+from typing import Any, Dict, List
 
 from .config import Settings
+from .credential_check import STATE_INVALID, STATE_VALID, check_oauth_token
 from .logs import get_logger, setup_logging
 from .cron import CronScheduler
 from .database import (
@@ -15,6 +18,7 @@ from .database import (
     get_all_connections,
     normalize_expiry_format,
     update_connection,
+    update_connection_health,
 )
 from .discovery import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
@@ -22,14 +26,37 @@ from .providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, Loc
 from .web import start_omini_web
 
 
+# Prefixos que descrevem falha. Emitir tudo em INFO fazia com que
+# LOG_LEVEL=WARNING escondesse justamente os eventos que motivaram o log
+# persistente: quem sobe o nível para reduzir ruído perdia toda falha.
+PREFIXOS_DE_ERRO = {"FALHA", "ERRO", "ERROR", "FAILURE"}
+PREFIXOS_DE_AVISO = {"AVISO", "WARN", "WARNING"}
+
+
 def log_msg(prefix: str, text: str):
-    """Registra um evento no log persistente (e no stdout, se LOG_TO_STDOUT permitir)."""
-    get_logger().info(f"[{prefix}] {text}")
+    """Registra um evento no log persistente (e no stdout, se LOG_TO_STDOUT permitir).
+
+    O nível segue o prefixo: falha vai como ERROR, aviso como WARNING, o resto
+    como INFO.
+    """
+    logger = get_logger()
+    mensagem = f"[{prefix}] {text}"
+    alvo = str(prefix).upper()
+    if alvo in PREFIXOS_DE_ERRO:
+        logger.error(mensagem)
+    elif alvo in PREFIXOS_DE_AVISO:
+        logger.warning(mensagem)
+    else:
+        logger.info(mensagem)
 
 
 class OmniSyncEngine:
     def __init__(self, settings: Settings):
         self.settings = settings
+        # O botao da tela e o cron chamam esta mesma instancia, e o servidor web
+        # atende cada requisicao em uma thread. Sem isto, duas renovacoes OAuth
+        # concorrentes podem sobrescrever um token recem-rotacionado.
+        self._sync_lock = threading.Lock()
         self.discovery = HostDiscoveryEngine(
             host_home=settings.host_home,
             extra_paths=settings.credential_paths,
@@ -44,6 +71,16 @@ class OmniSyncEngine:
         self.local_provider = LocalProvider()
 
     def sync_all(self):
+        """Executa um ciclo completo, serializado.
+
+        Uma execucao manual pela tela e uma execucao agendada nunca podem se
+        sobrepor, ou duas renovacoes OAuth concorrentes sobrescrevem o token uma
+        da outra.
+        """
+        with self._sync_lock:
+            return self._sync_all_locked()
+
+    def _sync_all_locked(self):
         if not os.path.exists(self.settings.db_path):
             log_msg("AVISO", f"Aguardando banco do OmniRoute em: {self.settings.db_path}")
             return {"success": False, "error": "db_not_found"}
@@ -54,11 +91,36 @@ class OmniSyncEngine:
         refreshed = 0
         normalized = 0
         now_ms = int(time.time() * 1000)
+        detalhes: List[Dict[str, Any]] = []
+        erros: List[str] = []
 
         for c in conns:
             provider = c["provider"]
             cid = c["id"]
             name = c["name"]
+            # O histórico da tela consome esta lista. Sem ela, todo ciclo bem
+            # sucedido aparecia com log vazio e "nenhum ciclo executado ainda".
+            detalhe: Dict[str, Any] = {
+                "id": cid,
+                "provider": provider,
+                "name": name,
+                "actions": [],
+            }
+            detalhes.append(detalhe)
+
+            # Cura o formato de expiração para QUALQUER provedor OAuth, não só
+            # para o ramo do Antigravity. Um epoch numérico em texto é Invalid
+            # Date para o OmniRoute; se a renovação falhar — refresh token
+            # revogado, client credentials ausentes — o valor ilegível
+            # permanecia para sempre justamente no caso em que mais importa.
+            bruto_expiracao = str(c.get("expiresAt") or "")
+            if bruto_expiracao.isdigit():
+                exp_curado = parse_expiry_to_ms(c.get("expiresAt"))
+                if exp_curado and normalize_expiry_format(self.settings.db_path, cid, exp_curado):
+                    normalized += 1
+                    nota = "expires_at normalizado para ISO-8601"
+                    log_msg("STATUS", f"[{provider} · {name}] {nota}")
+                    detalhe["actions"].append(nota)
 
             # 1. Google / Antigravity OAuth
             if provider in ("antigravity", "gemini-cli"):
@@ -70,15 +132,31 @@ class OmniSyncEngine:
                 exp_ms = parse_expiry_to_ms(c.get("expiresAt"))
                 rem_sec = int((exp_ms - now_ms) / 1000) if exp_ms else 0
 
-                # Cura o formato antes de tentar renovar. Um epoch numerico em
-                # texto e Invalid Date para o OmniRoute, que entao conclui que a
-                # conexao nao tem validade conhecida e para de renovar sozinho.
-                # Se a renovacao falhar, o formato ao menos fica legivel.
-                raw_expiry = str(c.get("expiresAt") or "")
-                if exp_ms and raw_expiry.isdigit():
-                    if normalize_expiry_format(self.settings.db_path, cid, exp_ms):
-                        normalized += 1
-                        log_msg("STATUS", f"[{provider} · {name}] expires_at normalizado para ISO-8601")
+                # Pergunta ao Google se o token ainda vale, em vez de deduzir
+                # isso da validade guardada. Um token revogado cuja expiração
+                # gravada ainda está no futuro continuava sendo exibido como
+                # ativo — que é exatamente o caso que o painel precisa mostrar.
+                if self.settings.validate_credentials and c.get("accessToken"):
+                    veredito = check_oauth_token(
+                        str(c.get("accessToken")), timeout=self.settings.validation_timeout
+                    )
+                    if veredito.state == STATE_INVALID:
+                        nota = f"Token de acesso RECUSADO pelo Google ({veredito.detail})"
+                        log_msg("FALHA", f"[{provider} · {name}] {nota}")
+                        detalhe["actions"].append(nota)
+                        update_connection_health(
+                            self.settings.db_path,
+                            cid,
+                            test_status="invalid",
+                            credential_state=veredito.state,
+                            last_error=veredito.detail,
+                        )
+                        # Recusado é motivo para renovar agora, não daqui a pouco.
+                        rem_sec = 0
+                    elif veredito.state == STATE_VALID:
+                        update_connection_health(
+                            self.settings.db_path, cid, credential_state=veredito.state
+                        )
 
                 if rem_sec <= self.settings.refresh_margin or not c.get("accessToken"):
                     if ref_tok:
@@ -124,10 +202,14 @@ class OmniSyncEngine:
                                 expires_at_ms=new_exp_ms,
                             )
                             refreshed += 1
+                            detalhe["actions"].append(f"OAuth renovado ({exp_in}s)")
                             log_msg("SUCESSO", f"[{provider} · {name}] OAuth renovado com sucesso ({exp_in}s)")
                             continue
                         else:
-                            log_msg("FALHA", f"[{provider} · {name}] Erro ao renovar OAuth: {err}")
+                            nota = f"Erro ao renovar OAuth: {err}"
+                            log_msg("FALHA", f"[{provider} · {name}] {nota}")
+                            detalhe["actions"].append(nota)
+                            erros.append(f"[{provider} · {name}] {nota}")
                 else:
                     log_msg("OK", f"[{provider} · {name}] Token válido por mais {rem_sec // 60} min")
                 continue
@@ -137,6 +219,7 @@ class OmniSyncEngine:
                 mod, data, notes = self.oauth_provider.check_and_refresh(c, margin_seconds=self.settings.refresh_margin)
                 for note in notes:
                     log_msg("STATUS", f"[{provider} · {name}] {note}")
+                    detalhe["actions"].append(note)
                 if mod and data:
                     update_connection(
                         self.settings.db_path,
@@ -146,33 +229,59 @@ class OmniSyncEngine:
                         expires_at_ms=data.get("expiresAt", now_ms + 3600000),
                     )
                     refreshed += 1
+                    detalhe["actions"].append("Credenciais OAuth atualizadas")
                     log_msg("SUCESSO", f"[{provider} · {name}] Credenciais OAuth atualizadas no storage.sqlite")
                 continue
 
             # 3. Provedores de API Key (Groq, Mistral, OpenRouter, Gemini, OpenAI, etc.)
             if self.api_provider.can_handle(c):
-                mod, data, notes = self.api_provider.check_and_refresh(c)
+                renovou, data, notes = self.api_provider.check_and_refresh(c)
                 for note in notes:
                     log_msg("STATUS", f"[{provider} · {name}] {note}")
-                if mod and data:
+                    detalhe["actions"].append(note)
+                if data:
+                    # O resultado da sondagem tem de ir para o banco. Sem isto o
+                    # painel recarregava a linha antiga e uma chave recusada
+                    # continuava verde na tela.
+                    update_connection_health(
+                        self.settings.db_path,
+                        cid,
+                        test_status=data.get("testStatus"),
+                        credential_state=data.get("credentialState"),
+                        last_error=data.get("lastError"),
+                        clear_rate_limit=not data.get("rateLimitedUntil"),
+                    )
+                if renovou:
                     refreshed += 1
                     log_msg("SUCESSO", f"[{provider} · {name}] Chave de API sincronizada no storage.sqlite")
                 continue
 
             # 4. Provedores Locais (Ollama, proxies locais)
             if self.local_provider.can_handle(c):
-                _, _, notes = self.local_provider.check_and_refresh(c)
+                _, data, notes = self.local_provider.check_and_refresh(c)
                 for note in notes:
                     log_msg("STATUS", f"[{provider} · {name}] {note}")
+                    detalhe["actions"].append(note)
+                if data:
+                    update_connection_health(
+                        self.settings.db_path,
+                        cid,
+                        test_status=data.get("testStatus"),
+                        discovered_models=data.get("discoveredModels"),
+                        last_error=data.get("lastError"),
+                    )
                 continue
 
             log_msg("INFO", f"[{provider} · {name}] Conexão preservada sem pendências")
 
         return {
-            "success": True,
+            "success": not erros,
             "total": len(conns),
             "refreshed": refreshed,
             "normalized": normalized,
+            # O histórico por execução da tela lê estes dois campos.
+            "details": detalhes,
+            "errors": erros,
         }
 
 
@@ -308,6 +417,9 @@ def main():
         settings.db_path = args.db_path
     if args.interval:
         settings.sync_interval = args.interval
+        # O agendador le cron_interval, ja derivado do ambiente antes de as
+        # opcoes chegarem aqui: sem esta linha --interval era um no-op no cron.
+        settings.cron_interval = args.interval
     if args.margin:
         settings.refresh_margin = args.margin
     if args.no_web:

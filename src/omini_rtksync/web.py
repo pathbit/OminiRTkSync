@@ -550,6 +550,11 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
                 "online": online,
                 "statusCode": 200 if online else 0,
                 "latencyMs": latency_ms,
+                # Bandeira explicita: o resumo e texto para humano e vinha
+                # sempre preenchido, inclusive com "Banco nao encontrado".
+                # Converter esse texto em booleano fazia a tela declarar banco e
+                # gateway 100% operacionais justamente quando o arquivo sumia.
+                "dbOk": db_exists,
                 "dbSummary": (
                     f"Operacional ({len(rows)} conexoes, {len(combos)} combos)"
                     if db_exists

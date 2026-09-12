@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 from omini_rtksync.database import (
     detect_connection_table,
-    get_all_combos,
     get_all_connections,
     get_db_connection,
     normalize_expiry_format,
