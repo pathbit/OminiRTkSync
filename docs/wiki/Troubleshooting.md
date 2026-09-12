@@ -80,7 +80,7 @@ If the numbers still look wrong, the synchronizer may not be writing at all — 
 | :--- | :--- |
 | `OK` | Database readable and gateway reachable. |
 | `DATABASE_NOT_READY` | `DB_PATH` points at a file that does not exist. |
-| `OMNIROUTE_SERVICE_UNREACHABLE` | `OMNIROUTE_URL` is wrong, or the gateway is down. |
+| `GATEWAY_SERVICE_UNREACHABLE` | `OMNIROUTE_URL` is wrong, or the gateway is down. |
 
 ---
 
