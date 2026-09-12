@@ -1,4 +1,4 @@
-"""Motor de descoberta universal de credenciais locais no host para o OminiRTKSync."""
+"""Universal host credential discovery engine for OminiRTKSync."""
 
 import json
 import os
@@ -8,9 +8,9 @@ from typing import Any, Dict, List, Optional
 
 class HostDiscoveryEngine:
     """
-    Localiza e extrai credenciais de ferramentas e CLIs instaladas no host.
-    Funciona tanto executando nativamente no host quanto dentro do container
-    com o diretório montado em HOST_HOME (ex: /root/host).
+    Locates and extracts local credentials from tools and CLIs installed on host.
+    Operates seamlessly whether running natively on host or inside container
+    with host directory mounted at HOST_HOME (e.g. /root/host).
     """
 
     def __init__(self, host_home: Optional[str] = None, extra_paths: Optional[List[str]] = None):
@@ -41,8 +41,8 @@ class HostDiscoveryEngine:
             return None
 
     def discover_google(self) -> Optional[Dict[str, Any]]:
-        """Descobre tokens do Google Antigravity / Gemini CLI."""
-        # 1. jetski-standalone-oauth-token (token standalone do Antigravity)
+        """Discover Google Antigravity / Gemini CLI tokens."""
+        # 1. jetski-standalone-oauth-token (Antigravity standalone token)
         jetski_candidates = [
             os.path.join(self.host_home, ".gemini", "jetski-standalone-oauth-token"),
             os.path.join(self.host_home, ".config", "antigravity", "jetski-standalone-oauth-token"),
@@ -86,7 +86,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_claude(self) -> Optional[Dict[str, Any]]:
-        """Descobre configurações e contas do Claude Code CLI e Anthropic."""
+        """Discover Claude Code CLI and Anthropic configurations."""
         settings_path = os.path.join(self.host_home, ".claude", "settings.json")
         data = self._read_json(settings_path)
         if data and isinstance(data.get("env"), dict):
@@ -125,7 +125,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_github(self) -> Optional[Dict[str, Any]]:
-        """Descobre credenciais do GitHub CLI e Copilot."""
+        """Discover GitHub CLI and Copilot credentials."""
         copilot_hosts = os.path.join(self.host_home, ".config", "github-copilot", "hosts.json")
         copilot_data = self._read_json(copilot_hosts)
         if copilot_data:
@@ -158,7 +158,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_codex_openai(self) -> Optional[Dict[str, Any]]:
-        """Descobre credenciais OpenAI e Codex."""
+        """Discover OpenAI and Codex credentials."""
         codex_auth = os.path.join(self.host_home, ".codex", "auth.json")
         data = self._read_json(codex_auth)
         if data:
@@ -192,7 +192,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_kiro(self) -> Optional[Dict[str, Any]]:
-        """Descobre credenciais AWS Kiro."""
+        """Discover AWS Kiro credentials."""
         candidates = [
             os.path.join(self.host_home, ".kiro", "credentials"),
             os.path.join(self.host_home, ".kiro", "settings", "auth.json"),
@@ -208,7 +208,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_codeium(self) -> Optional[Dict[str, Any]]:
-        """Descobre configurações e chaves Codeium / Windsurf."""
+        """Discover Codeium / Windsurf configuration and API keys."""
         candidates = [
             os.path.join(self.host_home, ".codeium", "config.json"),
             os.path.join(self.host_home, ".windsurf", "auth.json"),
@@ -223,7 +223,7 @@ class HostDiscoveryEngine:
         return None
 
     def discover_all(self) -> Dict[str, Any]:
-        """Varre todos os provedores suportados no host."""
+        """Scan all supported local providers on host."""
         return {
             "google": self.discover_google(),
             "claude": self.discover_claude(),
@@ -234,7 +234,7 @@ class HostDiscoveryEngine:
         }
 
     def get_credential_for_provider(self, provider: str) -> Optional[Dict[str, Any]]:
-        """Busca credencial correspondente a um provedor do OmniRoute."""
+        """Find matching local credential for an OmniRoute provider."""
         p_lower = provider.lower()
         if p_lower in ("antigravity", "gemini-cli", "google"):
             return self.discover_google()
@@ -249,3 +249,4 @@ class HostDiscoveryEngine:
         if p_lower in ("codeium", "windsurf"):
             return self.discover_codeium()
         return None
+

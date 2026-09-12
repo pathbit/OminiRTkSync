@@ -1,4 +1,4 @@
-"""Testes unitários de normalização de datas para OmniRoute."""
+"""Unit tests for date normalization in OmniRoute."""
 
 import unittest
 from omini_rtksync.normalizer import parse_expiry_to_ms

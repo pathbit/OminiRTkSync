@@ -1,4 +1,4 @@
-"""Testes unitarios para carregamento de variaveis de ambiente e arquivo .env."""
+"""Unit tests for environment variable loading and .env file handling."""
 
 import os
 import tempfile
@@ -16,7 +16,7 @@ class TestConfigEnv(unittest.TestCase):
 
     def test_load_dotenv_parses_key_values_and_quotes(self):
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f:
-            f.write("# Comentario\n")
+            f.write("# Comment\n")
             f.write("TEST_ENV_VAR1=valor_um\n")
             f.write('TEST_ENV_VAR2="valor com aspas"\n')
             f.write("TEST_ENV_VAR3='valor com aspas simples'\n")
@@ -30,7 +30,7 @@ class TestConfigEnv(unittest.TestCase):
             self.assertEqual(os.environ.get("TEST_ENV_VAR1"), "valor_um")
             self.assertEqual(os.environ.get("TEST_ENV_VAR2"), "valor com aspas")
             self.assertEqual(os.environ.get("TEST_ENV_VAR3"), "valor com aspas simples")
-            # Nao deve sobrescrever variaveis ja existentes
+            # Should not overwrite existing environment variables
             self.assertEqual(os.environ.get("TEST_EXISTING"), "valor_original")
         finally:
             if os.path.exists(temp_path):

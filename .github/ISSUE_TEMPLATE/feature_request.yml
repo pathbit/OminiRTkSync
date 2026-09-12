@@ -1,21 +1,22 @@
-name: Sugestão de Melhoria / Provedor
-description: Sugira uma nova funcionalidade, provedor ou melhoria para o OminiRTKSync
+name: Feature Request / Provider Suggestion
+description: Suggest a new feature, connection provider, or enhancement for OminiRTKSync
 title: "[FEAT] "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Obrigado por propor melhorias para o OminiRTKSync!
+        Thank you for proposing improvements for OminiRTKSync!
   - type: textarea
     id: idea
     attributes:
-      label: Descrição da Sugestão
-      description: Explique detalhadamente o caso de uso ou a melhoria desejada
+      label: Suggestion Description
+      description: Explain in detail your use case or requested enhancement
     validations:
       required: true
   - type: textarea
     id: context
     attributes:
-      label: Contexto no OmniRoute
-      description: Como o OmniRoute gerencia essa conexão e de que forma o OminiRTKSync deve interagir?
+      label: OmniRoute Context
+      description: How does OmniRoute manage this connection and how should OminiRTKSync interact with it?
+

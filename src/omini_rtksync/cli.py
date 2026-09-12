@@ -1,4 +1,4 @@
-"""CLI e orquestrador do OminiRTKSync para OmniRoute."""
+"""CLI and orchestrator of OminiRTKSync for OmniRoute."""
 
 import argparse
 import os
@@ -35,11 +35,11 @@ class OmniSyncEngine:
 
     def sync_all(self):
         if not os.path.exists(self.settings.db_path):
-            log_msg("AVISO", f"Aguardando banco do OmniRoute em: {self.settings.db_path}")
+            log_msg("WARNING", f"Waiting for OmniRoute database at: {self.settings.db_path}")
             return {"success": False, "error": "db_not_found"}
 
         conns = get_all_connections(self.settings.db_path)
-        log_msg("INFO", f"Inspecionando {len(conns)} conexões no OmniRoute ({self.settings.db_path})...")
+        log_msg("INFO", f"Inspecting {len(conns)} connections in OmniRoute ({self.settings.db_path})...")
 
         refreshed = 0
         now_ms = int(time.time() * 1000)
@@ -103,15 +103,15 @@ class OmniSyncEngine:
                                 expires_at_ms=new_exp_ms,
                             )
                             refreshed += 1
-                            log_msg("SUCESSO", f"[{provider} · {name}] OAuth renovado com sucesso ({exp_in}s)")
+                            log_msg("SUCCESS", f"[{provider} · {name}] OAuth refreshed successfully ({exp_in}s)")
                             continue
                         else:
-                            log_msg("FALHA", f"[{provider} · {name}] Erro ao renovar OAuth: {err}")
+                            log_msg("FAILURE", f"[{provider} · {name}] Error refreshing OAuth: {err}")
                 else:
-                    log_msg("OK", f"[{provider} · {name}] Token válido por mais {rem_sec // 60} min")
+                    log_msg("OK", f"[{provider} · {name}] Token valid for another {rem_sec // 60} min")
                 continue
 
-            # 2. Demais Provedores OAuth (Claude, GitHub, Codex, Kiro)
+            # 2. Other OAuth Providers (Claude, GitHub, Codex, Kiro)
             if self.oauth_provider.can_handle(c):
                 mod, data, notes = self.oauth_provider.check_and_refresh(c, margin_seconds=self.settings.refresh_margin)
                 for note in notes:
@@ -125,27 +125,27 @@ class OmniSyncEngine:
                         expires_at_ms=data.get("expiresAt", now_ms + 3600000),
                     )
                     refreshed += 1
-                    log_msg("SUCESSO", f"[{provider} · {name}] Credenciais OAuth atualizadas no storage.sqlite")
+                    log_msg("SUCCESS", f"[{provider} · {name}] OAuth credentials updated in storage.sqlite")
                 continue
 
-            # 3. Provedores de API Key (Groq, Mistral, OpenRouter, Gemini, OpenAI, etc.)
+            # 3. API Key Providers (Groq, Mistral, OpenRouter, Gemini, OpenAI, etc.)
             if self.api_provider.can_handle(c):
                 mod, data, notes = self.api_provider.check_and_refresh(c)
                 for note in notes:
                     log_msg("STATUS", f"[{provider} · {name}] {note}")
                 if mod and data:
                     refreshed += 1
-                    log_msg("SUCESSO", f"[{provider} · {name}] Chave de API sincronizada no storage.sqlite")
+                    log_msg("SUCCESS", f"[{provider} · {name}] API key synchronized in storage.sqlite")
                 continue
 
-            # 4. Provedores Locais (Ollama, proxies locais)
+            # 4. Local Providers (Ollama, local proxies)
             if self.local_provider.can_handle(c):
                 _, _, notes = self.local_provider.check_and_refresh(c)
                 for note in notes:
                     log_msg("STATUS", f"[{provider} · {name}] {note}")
                 continue
 
-            log_msg("INFO", f"[{provider} · {name}] Conexão preservada sem pendências")
+            log_msg("INFO", f"[{provider} · {name}] Connection preserved with no pending actions")
 
         return {"success": True, "total": len(conns), "refreshed": refreshed}
 
@@ -155,27 +155,27 @@ def print_status(settings: Settings):
         conns = get_all_connections(settings.db_path)
         combos = get_all_combos(settings.db_path)
     except Exception as e:
-        print(f"❌ Erro ao consultar banco SQLite ({settings.db_path}): {e}", file=sys.stderr)
+        print(f"❌ Error querying SQLite database ({settings.db_path}): {e}", file=sys.stderr)
         sys.exit(1)
 
     print("\n" + "=" * 74)
-    print("⚡ OMINIRTKSYNC · STATUS DAS CONEXÕES DO OMNIROUTE")
-    print(f"   Banco de Dados: {settings.db_path}")
+    print("⚡ OMINIRTKSYNC · OMNIROUTE CONNECTION STATUS")
+    print(f"   Database: {settings.db_path}")
     print("=" * 74)
 
-    print(f"\n🔌 Conexões Registradas ({len(conns)}):")
-    print(f"  {'PROVEDOR':<16} {'NOME':<26} {'TIPO':<10} {'STATUS':<10}")
+    print(f"\n🔌 Registered Connections ({len(conns)}):")
+    print(f"  {'PROVIDER':<16} {'NAME':<26} {'TYPE':<10} {'STATUS':<10}")
     print("  " + "-" * 72)
 
     for c in conns:
-        tipo = "OAuth 2.0" if c["isOAuth"] else ("API Key" if c["hasApiKey"] else "Outro")
-        st = c.get("testStatus", "ativo")
+        tipo = "OAuth 2.0" if c["isOAuth"] else ("API Key" if c["hasApiKey"] else "Other")
+        st = c.get("testStatus", "active")
         print(f"  {c['provider']:<16} {c['name'][:25]:<26} {tipo:<10} ✅ {st:<8}")
 
     if combos:
-        print(f"\n🔀 Combos Cadastrados ({len(combos)}):")
+        print(f"\n🔀 Registered Combos ({len(combos)}):")
         for cb in combos:
-            print(f"  • {cb['name']} ({len(cb['models'])} modelos)")
+            print(f"  • {cb['name']} ({len(cb['models'])} models)")
 
     print("\n" + "=" * 74 + "\n")
 
@@ -186,7 +186,7 @@ def run_daemon(settings: Settings):
 
     def handle_signal(sig, frame):
         nonlocal running
-        print(f"\n[!] Sinal {sig} recebido. Encerrando OminiRTKSync...", flush=True)
+        print(f"\n[!] Signal {sig} received. Shutting down OminiRTKSync...", flush=True)
         running = False
 
     signal.signal(signal.SIGINT, handle_signal)
@@ -194,20 +194,20 @@ def run_daemon(settings: Settings):
 
     print("=" * 74, flush=True)
     print("⚡ OMINIRTKSYNC · OMNIROUTE UNIVERSAL TOKEN & CONNECTION SYNCHRONIZER", flush=True)
-    print(f"   Banco SQLite: {settings.db_path}", flush=True)
-    print(f"   Gateway URL:  {settings.omniroute_url}", flush=True)
-    print(f"   Host Home:    {engine.discovery.host_home}", flush=True)
+    print(f"   SQLite Database: {settings.db_path}", flush=True)
+    print(f"   Gateway URL:     {settings.omniroute_url}", flush=True)
+    print(f"   Host Home:       {engine.discovery.host_home}", flush=True)
     print("=" * 74, flush=True)
 
-    # Varredura inicial de credenciais disponíveis no host
+    # Initial scan of available credentials on host
     discovered = engine.discovery.discover_all()
     found_any = False
     for prov, info in discovered.items():
         if info:
             found_any = True
-            log_msg("DISCOVERY", f"Credencial detectada no host: [{prov}] -> {info.get('source_path')}")
+            log_msg("DISCOVERY", f"Host credential detected: [{prov}] -> {info.get('source_path')}")
     if not found_any:
-        log_msg("DISCOVERY", f"Nenhuma credencial local pré-existente em {engine.discovery.host_home}")
+        log_msg("DISCOVERY", f"No pre-existing local credentials in {engine.discovery.host_home}")
 
     cron_scheduler = CronScheduler(
         sync_callback=engine.sync_all,
@@ -226,9 +226,9 @@ def run_daemon(settings: Settings):
                 settings=settings,
                 cron_scheduler=cron_scheduler,
             )
-            print(f"🌐 Dashboard Web ativo em: http://{settings.web_host}:{settings.web_port}", flush=True)
+            print(f"🌐 Web Dashboard active at: http://{settings.web_host}:{settings.web_port}", flush=True)
         except Exception as e:
-            print(f"⚠️ Não foi possível iniciar dashboard web na porta {settings.web_port}: {e}", flush=True)
+            print(f"⚠️ Could not start web dashboard on port {settings.web_port}: {e}", flush=True)
 
     cron_scheduler.start()
 
@@ -236,24 +236,24 @@ def run_daemon(settings: Settings):
         time.sleep(1)
 
     cron_scheduler.stop()
-    print("[*] OminiRTKSync encerrado.", flush=True)
+    print("[*] OminiRTKSync terminated.", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="ominirtksync",
-        description="OminiRTKSync · OmniRoute Universal Token & Connection Sync",
+        description="OminiRTKSync · OmniRoute Universal Token & Connection Synchronizer",
     )
-    parser.add_argument("--db-path", dest="db_path", help="Caminho para o storage.sqlite do OmniRoute")
-    parser.add_argument("--status", action="store_true", help="Exibe status das conexões do OmniRoute e sai")
-    parser.add_argument("--once", action="store_true", help="Executa uma rodada única de sincronização e sai")
-    parser.add_argument("--daemon", action="store_true", help="Executa em modo daemon perpétuo")
-    parser.add_argument("--interval", type=int, help="Intervalo de checagem em segundos (padrão: 300)")
-    parser.add_argument("--margin", type=int, help="Margem de renovação em segundos (padrão: 900)")
-    parser.add_argument("--no-web", action="store_true", help="Desativa dashboard web")
-    parser.add_argument("--port", type=int, help="Porta do dashboard web (padrão: 9191)")
-    parser.add_argument("--user", type=str, help="Usuário para autenticação no dashboard web (padrão: admin)")
-    parser.add_argument("--password", type=str, help="Senha para autenticação no dashboard web (padrão: pathbit)")
+    parser.add_argument("--db-path", dest="db_path", help="Path to OmniRoute storage.sqlite database")
+    parser.add_argument("--status", action="store_true", help="Display OmniRoute connection status and exit")
+    parser.add_argument("--once", action="store_true", help="Run a single synchronization pass and exit")
+    parser.add_argument("--daemon", action="store_true", help="Run in perpetual daemon mode")
+    parser.add_argument("--interval", type=int, help="Check interval in seconds (default: 300)")
+    parser.add_argument("--margin", type=int, help="Refresh margin in seconds (default: 900)")
+    parser.add_argument("--no-web", action="store_true", help="Disable web dashboard")
+    parser.add_argument("--port", type=int, help="Web dashboard port (default: 9191)")
+    parser.add_argument("--user", type=str, help="Web dashboard authentication username (default: admin)")
+    parser.add_argument("--password", type=str, help="Web dashboard authentication password (default: pathbit)")
 
     args = parser.parse_args()
     settings = Settings.from_env()
@@ -280,7 +280,7 @@ def main():
     if args.once:
         engine = OmniSyncEngine(settings)
         res = engine.sync_all()
-        print(f"[*] Sincronização OmniRoute concluída: {res.get('total', 0)} conexões inspecionadas, {res.get('refreshed', 0)} renovadas.")
+        print(f"[*] OmniRoute synchronization complete: {res.get('total', 0)} connections inspected, {res.get('refreshed', 0)} refreshed.")
         return
 
     run_daemon(settings)

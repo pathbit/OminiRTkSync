@@ -1,4 +1,4 @@
-"""Testes unitários de manipulação do banco SQLite do OmniRoute."""
+"""Unit tests for OmniRoute SQLite database operations."""
 
 import os
 import sqlite3

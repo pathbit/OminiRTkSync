@@ -1,4 +1,4 @@
-"""Configurações globais e carregamento de variáveis de ambiente para o OminiRTKSync."""
+"""Global settings and environment variable management for OminiRTKSync."""
 
 import os
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from typing import List
 
 
 def load_dotenv(dotenv_path: str = ".env") -> None:
-    """Carrega variaveis de um arquivo .env para os.environ se nao estiverem definidas."""
+    """Load variables from a .env file into os.environ if not already defined."""
     if not os.path.isfile(dotenv_path):
         return
     try:
@@ -28,7 +28,7 @@ def load_dotenv(dotenv_path: str = ".env") -> None:
 
 @dataclass
 class Settings:
-    """Configurações de execução do OminiRTKSync para OmniRoute."""
+    """Runtime configuration for OminiRTKSync targeting OmniRoute."""
     db_path: str
     host_home: str = ""
     omniroute_url: str = "http://127.0.0.1:20128"
@@ -103,7 +103,7 @@ class Settings:
         ]
         valid_paths = [p for p in default_paths if p]
 
-        # Descoberta de banco SQLite do OmniRoute
+        # SQLite database discovery for OmniRoute
         db_path = os.environ.get("DB_PATH", "")
         if not db_path:
             candidate_dbs = [
@@ -138,3 +138,4 @@ class Settings:
             dashboard_password=d_pass,
             cron_interval=sync_int,
         )
+

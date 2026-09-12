@@ -1,4 +1,4 @@
-"""Servidor HTTP e dashboard web para OminiRTKSync com Basic Auth e Cron Scheduler."""
+"""HTTP server and web dashboard for OminiRTKSync with Basic Auth and Cron Scheduler."""
 
 import base64
 import json
@@ -52,7 +52,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.send_header("WWW-Authenticate", 'Basic realm="OminiRTKSync Dashboard"')
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"Autenticacao requerida. Credenciais padrao: admin / pathbit")
+        self.wfile.write(b"Authentication required. Default credentials: admin / pathbit")
         return False
 
     def do_GET(self):
@@ -207,7 +207,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             "dbPath": self.db_path,
             "connectionsCount": conns_count,
             "combosCount": combos_count,
-            "message": "Gateway OmniRoute e banco storage.sqlite 100% operacionais!" if (gateway_ok and db_exists) else "Falha ao conectar ao OmniRoute ou banco indisponivel",
+            "message": "OmniRoute gateway and storage.sqlite database 100% operational!" if (gateway_ok and db_exists) else "Failed to connect to OmniRoute or database unavailable",
         }
 
         body = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
@@ -224,7 +224,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             new_pass = str(data.get("newPassword") or "").strip()
 
             if not new_pass or len(new_pass) < 4:
-                body = json.dumps({"success": False, "error": "A senha deve conter ao menos 4 caracteres."}).encode("utf-8")
+                body = json.dumps({"success": False, "error": "Password must be at least 4 characters long."}).encode("utf-8")
                 self.send_response(HTTPStatus.BAD_REQUEST)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -237,7 +237,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
                 if ok:
                     body = json.dumps({
                         "success": True,
-                        "message": "Credenciais atualizadas com sucesso!",
+                        "message": "Credentials updated successfully!",
                         "newUser": new_user,
                     }).encode("utf-8")
                     self.send_response(HTTPStatus.OK)
@@ -247,7 +247,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
                     return
 
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Falha ao salvar credenciais")
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Failed to save credentials")
         except Exception as e:
             body = json.dumps({"success": False, "error": str(e)}).encode("utf-8")
             self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -299,11 +299,11 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 
     def serve_html(self):
         html = """<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OminiRTKSync · OminiRoute Universal Token & Connection Synchronizer</title>
+  <title>OminiRTKSync · OmniRoute Universal Token & Connection Synchronizer</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -520,9 +520,9 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     
     <div id="alertDefaultPass" class="alert-banner">
       <div>
-        ⚠️ <strong>Atenção de Segurança:</strong> Você está utilizando as credenciais padrão de fábrica (<code>admin</code> / <code>pathbit</code>). Recomenda-se alterar a senha para proteger o dashboard.
+        ⚠️ <strong>Security Notice:</strong> You are using the factory default credentials (<code>admin</code> / <code>pathbit</code>). It is strongly recommended to change your password to secure the dashboard.
       </div>
-      <button class="btn-warning" onclick="openPasswordModal()">Alterar Credenciais</button>
+      <button class="btn-warning" onclick="openPasswordModal()">Change Credentials</button>
     </div>
 
     <header>
@@ -531,26 +531,26 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         <p>OminiRoute Universal Token & Connection Synchronizer (<a href="https://github.com/diegosouzapw/OmniRoute" target="_blank" style="color:var(--accent);text-decoration:none;">OmniRoute</a>)</p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-secondary" onclick="openPasswordModal()">🔐 Acesso</button>
-        <button id="syncBtn" class="btn btn-primary" onclick="triggerSync()">🔄 Sincronizar Agora</button>
+        <button class="btn btn-secondary" onclick="openPasswordModal()">🔐 Access</button>
+        <button id="syncBtn" class="btn btn-primary" onclick="triggerSync()">🔄 Sync Now</button>
       </div>
     </header>
 
     <div class="stats">
       <div class="stat-card">
-        <div class="label">Total de Conexões</div>
+        <div class="label">Total Connections</div>
         <div class="value" id="statTotal">-</div>
       </div>
       <div class="stat-card">
-        <div class="label">Contas OAuth Ativas</div>
+        <div class="label">Active OAuth Accounts</div>
         <div class="value" id="statOAuth" style="color:var(--accent);">-</div>
       </div>
       <div class="stat-card">
-        <div class="label">Provedores API Key</div>
+        <div class="label">API Key Providers</div>
         <div class="value" id="statApiKeys">-</div>
       </div>
       <div class="stat-card">
-        <div class="label">Combos Registrados</div>
+        <div class="label">Registered Combos</div>
         <div class="value" id="statCombos" style="color:var(--success);">-</div>
       </div>
     </div>
@@ -558,104 +558,104 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     <div class="grid-two">
       <div class="card">
         <div class="section-title">
-          <span>🔌 Conexão com Gateway OmniRoute</span>
-          <button id="testGwBtn" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" onclick="testGateway()">Testar Conexão</button>
+          <span>🔌 OmniRoute Gateway Connection</span>
+          <button id="testGwBtn" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" onclick="testGateway()">Test Connection</button>
         </div>
-        <p style="font-size:13px;color:#8b949e;">Valida a resposta HTTP, latência e acesso ao banco storage.sqlite.</p>
+        <p style="font-size:13px;color:#8b949e;">Validates HTTP response, latency, and access to the storage.sqlite database.</p>
         <div id="gwDiagBox" class="diag-box">
           <div class="diag-row"><span>OmniRoute URL:</span><span id="gwUrl">-</span></div>
-          <div class="diag-row"><span>Status Gateway:</span><span id="gwStatus" style="color:#8b949e;">Aguardando teste...</span></div>
-          <div class="diag-row"><span>Latência HTTP:</span><span id="gwLatency">-</span></div>
-          <div class="diag-row"><span>Banco SQLite:</span><span id="gwDb">-</span></div>
-          <div class="diag-row"><span>Diagnóstico:</span><span id="gwMsg" style="color:#8b949e;">Clique em 'Testar Conexão'</span></div>
+          <div class="diag-row"><span>Gateway Status:</span><span id="gwStatus" style="color:#8b949e;">Awaiting test...</span></div>
+          <div class="diag-row"><span>HTTP Latency:</span><span id="gwLatency">-</span></div>
+          <div class="diag-row"><span>SQLite Database:</span><span id="gwDb">-</span></div>
+          <div class="diag-row"><span>Diagnostic:</span><span id="gwMsg" style="color:#8b949e;">Click 'Test Connection'</span></div>
         </div>
       </div>
 
       <div class="card">
         <div class="section-title">
-          <span>⏰ Cron Scheduler (Renovação Contínua)</span>
-          <button id="cronRunBtn" class="btn btn-primary" style="font-size:11px;padding:4px 10px;" onclick="runCronNow()">Executar Cron Agora</button>
+          <span>⏰ Cron Scheduler (Continuous Refresh)</span>
+          <button id="cronRunBtn" class="btn btn-primary" style="font-size:11px;padding:4px 10px;" onclick="runCronNow()">Run Cron Now</button>
         </div>
         <div class="cron-info">
           <div style="font-size:13px;">
-            <span class="pulse-dot"></span> <strong id="cronActiveLabel">Ativo</strong>
-            <span style="color:#8b949e;margin-left:4px;">(a cada <span id="cronInterval">300</span>s)</span>
+            <span class="pulse-dot"></span> <strong id="cronActiveLabel">Active</strong>
+            <span style="color:#8b949e;margin-left:4px;">(every <span id="cronInterval">300</span>s)</span>
           </div>
-          <span style="font-size:11px;color:#8b949e;">Total ciclos: <strong id="cronTotalRuns">0</strong></span>
+          <span style="font-size:11px;color:#8b949e;">Total cycles: <strong id="cronTotalRuns">0</strong></span>
         </div>
         <div class="diag-box">
-          <div class="diag-row"><span>Última Execução:</span><span id="cronLastRun">-</span></div>
-          <div class="diag-row"><span>Próxima Execução:</span><span id="cronNextRun">-</span></div>
-          <div class="diag-row"><span>Tokens Renovados:</span><span id="cronTotalRenewals" style="color:var(--success);">0</span></div>
-          <div class="diag-row"><span>Último Resultado:</span><span id="cronLastResult" style="color:var(--text-bright);">-</span></div>
+          <div class="diag-row"><span>Last Run:</span><span id="cronLastRun">-</span></div>
+          <div class="diag-row"><span>Next Run:</span><span id="cronNextRun">-</span></div>
+          <div class="diag-row"><span>Tokens Refreshed:</span><span id="cronTotalRenewals" style="color:var(--success);">0</span></div>
+          <div class="diag-row"><span>Last Result:</span><span id="cronLastResult" style="color:var(--text-bright);">-</span></div>
         </div>
       </div>
     </div>
 
-    <div class="section-title">🔌 Conexões Monitoradas no OmniRoute</div>
+    <div class="section-title">🔌 Monitored Connections in OmniRoute</div>
     <div class="card card-nopad">
       <table>
         <thead>
           <tr>
-            <th>Provedor</th>
-            <th>Nome</th>
-            <th>Tipo</th>
+            <th>Provider</th>
+            <th>Name</th>
+            <th>Type</th>
             <th>Status</th>
-            <th>Validade Restante</th>
+            <th>Remaining Validity</th>
           </tr>
         </thead>
         <tbody id="connsTableBody">
-          <tr><td colspan="5" style="text-align:center;color:#8b949e;">Carregando conexões do storage.sqlite...</td></tr>
+          <tr><td colspan="5" style="text-align:center;color:#8b949e;">Loading connections from storage.sqlite...</td></tr>
         </tbody>
       </table>
     </div>
 
-    <div class="section-title">📋 Histórico de Ciclos do Cron</div>
+    <div class="section-title">📋 Cron Cycle History</div>
     <div class="card card-nopad">
       <table>
         <thead>
           <tr>
-            <th>Data e Hora (UTC)</th>
-            <th>Disparo</th>
-            <th>Duração</th>
-            <th>Contas Inspecionadas</th>
-            <th>OAuth Renovados</th>
+            <th>Date & Time (UTC)</th>
+            <th>Trigger</th>
+            <th>Duration</th>
+            <th>Accounts Inspected</th>
+            <th>OAuth Refreshed</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody id="cronHistoryBody">
-          <tr><td colspan="6" style="text-align:center;color:#8b949e;">Nenhum ciclo executado ainda.</td></tr>
+          <tr><td colspan="6" style="text-align:center;color:#8b949e;">No historical cycles recorded yet.</td></tr>
         </tbody>
       </table>
     </div>
 
     <footer>
-      OminiRTKSync · OminiRoute Universal Token & Connection Synchronizer · <a href="https://pathbit.co/" target="_blank" style="color:#8b949e;text-decoration:none;">Desenvolvido com ❤️ pela Pathbit</a>
+      OminiRTKSync · OmniRoute Universal Token & Connection Synchronizer · <a href="https://pathbit.co/" target="_blank" style="color:#8b949e;text-decoration:none;">Developed with ❤️ by Pathbit</a>
     </footer>
   </div>
 
   <div id="passwordModal" class="modal-overlay">
     <div class="modal">
-      <h2>🔐 Credenciais do Dashboard</h2>
+      <h2>🔐 Dashboard Credentials</h2>
       <p style="font-size:13px;color:#8b949e;margin-bottom:16px;">
-        Altere as credenciais de autenticação HTTP Basic Auth do seu dashboard.
+        Change the HTTP Basic Auth credentials for your dashboard.
       </p>
       <div class="form-group">
-        <label>Usuário de Acesso</label>
+        <label>Username</label>
         <input type="text" id="newUsernameInput" class="form-control" value="admin">
       </div>
       <div class="form-group">
-        <label>Nova Senha</label>
-        <input type="password" id="newPasswordInput" class="form-control" placeholder="Mínimo 4 caracteres">
+        <label>New Password</label>
+        <input type="password" id="newPasswordInput" class="form-control" placeholder="Minimum 4 characters">
       </div>
       <div class="form-group">
-        <label>Confirmar Nova Senha</label>
-        <input type="password" id="confirmPasswordInput" class="form-control" placeholder="Repita a senha">
+        <label>Confirm New Password</label>
+        <input type="password" id="confirmPasswordInput" class="form-control" placeholder="Repeat password">
       </div>
       <div id="modalMsg" style="font-size:12px;margin-top:8px;"></div>
       <div class="modal-actions">
-        <button class="btn btn-secondary" onclick="closePasswordModal()">Cancelar</button>
-        <button class="btn btn-primary" onclick="submitPasswordChange()">Salvar Credenciais</button>
+        <button class="btn btn-secondary" onclick="closePasswordModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitPasswordChange()">Save Credentials</button>
       </div>
     </div>
   </div>
@@ -670,7 +670,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         currentData = await res.json();
         renderDashboard(currentData);
       } catch (err) {
-        console.error('Erro ao carregar status:', err);
+        console.error('Error loading status:', err);
       }
     }
 
@@ -696,26 +696,26 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
       document.getElementById('cronInterval').innerText = cron.intervalSeconds || 300;
       document.getElementById('cronTotalRuns').innerText = cron.totalRuns || 0;
       document.getElementById('cronTotalRenewals').innerText = cron.totalRenewals || 0;
-      document.getElementById('cronLastRun').innerText = cron.lastRunAt || 'Nenhum ainda';
-      document.getElementById('cronNextRun').innerText = cron.nextRunAt || 'Calculando...';
+      document.getElementById('cronLastRun').innerText = cron.lastRunAt || 'None yet';
+      document.getElementById('cronNextRun').innerText = cron.nextRunAt || 'Calculating...';
       
       if (cron.lastResult) {
         const lr = cron.lastResult;
         document.getElementById('cronLastResult').innerText = 
-          `${lr.totalInspected} avaliadas · ${lr.refreshedCount} renovadas (${lr.durationMs}ms)`;
+          `${lr.totalInspected} evaluated · ${lr.refreshedCount} refreshed (${lr.durationMs}ms)`;
       }
 
       const connsBody = document.getElementById('connsTableBody');
       if (conns.length === 0) {
-        connsBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e;">Nenhuma conexão registrada no OmniRoute.</td></tr>';
+        connsBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e;">No connections registered in OmniRoute.</td></tr>';
       } else {
         connsBody.innerHTML = conns.map(c => `
           <tr>
             <td><span class="badge badge-provider">${c.provider}</span></td>
             <td><strong>${c.name}</strong></td>
             <td>${c.isOAuth ? 'OAuth 2.0' : 'API Key'}</td>
-            <td><span class="badge badge-ok">${c.testStatus || 'ativo'}</span></td>
-            <td class="mono">${c.isOAuth ? 'Monitorado via Cron' : 'Ilimitado'}</td>
+            <td><span class="badge badge-ok">${c.testStatus || 'active'}</span></td>
+            <td class="mono">${c.isOAuth ? 'Monitored via Cron' : 'Unlimited'}</td>
           </tr>
         `).join('');
       }
@@ -723,16 +723,16 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
       const histBody = document.getElementById('cronHistoryBody');
       const history = cron.history || [];
       if (history.length === 0) {
-        histBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;">Nenhum ciclo histórico registrado.</td></tr>';
+        histBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;">No historical cycles recorded yet.</td></tr>';
       } else {
         histBody.innerHTML = history.map(h => `
           <tr>
             <td class="mono" style="font-size:11px;">${h.timestamp}</td>
             <td><span class="badge badge-provider">${h.reason}</span></td>
             <td class="mono">${h.durationMs}ms</td>
-            <td>${h.totalInspected} contas</td>
+            <td>${h.totalInspected} accounts</td>
             <td style="color:${h.refreshedCount > 0 ? 'var(--success)' : 'inherit'};"><strong>${h.refreshedCount}</strong></td>
-            <td><span class="badge ${h.success ? 'badge-ok' : 'badge-err'}">${h.success ? 'SUCESSO' : 'FALHA'}</span></td>
+            <td><span class="badge ${h.success ? 'badge-ok' : 'badge-err'}">${h.success ? 'SUCCESS' : 'FAILURE'}</span></td>
           </tr>
         `).join('');
       }
@@ -741,55 +741,55 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     async function testGateway() {
       const btn = document.getElementById('testGwBtn');
       btn.disabled = true;
-      btn.innerText = 'Testando...';
+      btn.innerText = 'Testing...';
       try {
         const res = await fetch('/api/test-gateway', { method: 'POST' });
         const diag = await res.json();
         
         document.getElementById('gwStatus').innerHTML = diag.gatewayStatus === 'online' 
           ? `<span style="color:var(--success);font-weight:bold;">ONLINE (HTTP ${diag.httpStatusCode})</span>`
-          : `<span style="color:var(--danger);font-weight:bold;">OFFLINE (${diag.gatewayError || 'Erro'})</span>`;
+          : `<span style="color:var(--danger);font-weight:bold;">OFFLINE (${diag.gatewayError || 'Error'})</span>`;
         document.getElementById('gwLatency').innerText = `${diag.latencyMs} ms`;
         document.getElementById('gwDb').innerText = diag.dbStatus === 'ok' 
-          ? `Operacional (${diag.connectionsCount} conexões, ${diag.combosCount} combos)`
-          : 'Inacessível / Não encontrado';
+          ? `Operational (${diag.connectionsCount} connections, ${diag.combosCount} combos)`
+          : 'Inaccessible / Not found';
         document.getElementById('gwMsg').innerText = diag.message;
         document.getElementById('gwMsg').style.color = diag.success ? 'var(--success)' : 'var(--danger)';
       } catch (err) {
-        alert('Erro ao testar gateway: ' + err);
+        alert('Error testing gateway: ' + err);
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Testar Conexão';
+        btn.innerText = 'Test Connection';
       }
     }
 
     async function runCronNow() {
       const btn = document.getElementById('cronRunBtn');
       btn.disabled = true;
-      btn.innerText = 'Executando...';
+      btn.innerText = 'Running...';
       try {
         await fetch('/api/cron-run', { method: 'POST' });
         await loadStatus();
       } catch (err) {
-        alert('Erro ao executar cron: ' + err);
+        alert('Error running cron: ' + err);
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Executar Cron Agora';
+        btn.innerText = 'Run Cron Now';
       }
     }
 
     async function triggerSync() {
       const btn = document.getElementById('syncBtn');
       btn.disabled = true;
-      btn.innerText = 'Sincronizando...';
+      btn.innerText = 'Synchronizing...';
       try {
         await fetch('/api/sync', { method: 'POST' });
         await loadStatus();
       } catch (err) {
-        alert('Erro ao sincronizar: ' + err);
+        alert('Error synchronizing: ' + err);
       } finally {
         btn.disabled = false;
-        btn.innerText = '🔄 Sincronizar Agora';
+        btn.innerText = '🔄 Sync Now';
       }
     }
 
@@ -809,12 +809,12 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
       const msg = document.getElementById('modalMsg');
 
       if (!pass || pass.length < 4) {
-        msg.innerText = '❌ A senha deve conter pelo menos 4 caracteres.';
+        msg.innerText = '❌ Password must be at least 4 characters long.';
         msg.style.color = 'var(--danger)';
         return;
       }
       if (pass !== conf) {
-        msg.innerText = '❌ As senhas não conferem.';
+        msg.innerText = '❌ Passwords do not match.';
         msg.style.color = 'var(--danger)';
         return;
       }
@@ -834,7 +834,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             loadStatus();
           }, 1500);
         } else {
-          msg.innerText = '❌ ' + (d.error || 'Erro ao alterar credenciais');
+          msg.innerText = '❌ ' + (d.error || 'Error updating credentials');
           msg.style.color = 'var(--danger)';
         }
       } catch (e) {
@@ -876,3 +876,4 @@ def start_omini_web(
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
+

@@ -1,4 +1,4 @@
-"""Provedores universais de tokens e conexões para OmniRoute."""
+"""Universal token and connection providers for OmniRoute."""
 
 import json
 import os
@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 class GoogleProvider:
-    """Renovador OAuth para contas Google (Antigravity / Gemini CLI) no OmniRoute."""
+    """OAuth renewer for Google accounts (Antigravity / Gemini CLI) in OmniRoute."""
 
     OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -55,7 +55,7 @@ class GoogleProvider:
         self, refresh_token: str, client_id: str, client_secret: str
     ) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         if not client_id or not client_secret:
-            return False, None, "client_id ou client_secret não configurado no ambiente nem encontrado em shared.js"
+            return False, None, "client_id or client_secret not configured in environment nor found in shared.js"
         payload = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -85,7 +85,7 @@ class GoogleProvider:
 
 
 class GenericOAuthProvider:
-    """Monitor e sincronizador OAuth genérico para OmniRoute (Claude, GitHub, Codex, Kiro)."""
+    """Generic OAuth monitor and synchronizer for OmniRoute (Claude, GitHub, Codex, Kiro)."""
 
     KNOWN_TOKEN_URLS = {
         "claude": "https://api.anthropic.com/v1/oauth/token",
@@ -109,7 +109,7 @@ class GenericOAuthProvider:
         now_ms = int(time.time() * 1000)
         provider = conn.get("provider", "")
 
-        # 1. Verifica se há credencial local descoberta no host
+        # 1. Check if host has discovered local credential
         if self.discovery:
             local = self.discovery.get_credential_for_provider(provider)
             if local and local.get("accessToken") and local.get("accessToken") != conn.get("accessToken"):
@@ -120,22 +120,22 @@ class GenericOAuthProvider:
                     "expiresAt": exp_ms,
                 }
                 src = local.get("source_path", "host")
-                messages.append(f"Token sincronizado a partir do host ({src})")
+                messages.append(f"Token synchronized from host ({src})")
                 return True, res, messages
 
-        # 2. Avaliação de expiração
+        # 2. Expiry evaluation
         from .normalizer import parse_expiry_to_ms
         exp_ms = parse_expiry_to_ms(conn.get("expiresAt"))
         if not exp_ms:
-            messages.append("Conexão OAuth sem registro temporal de expiração")
+            messages.append("OAuth connection without temporal expiry timestamp")
             return False, None, messages
 
         rem = int((exp_ms - now_ms) / 1000)
         if rem > margin_seconds:
-            messages.append(f"Token válido por mais {rem // 60} min ({rem}s)")
+            messages.append(f"Token valid for another {rem // 60} min ({rem}s)")
             return False, None, messages
 
-        # 3. Tentativa de refresh
+        # 3. Refresh attempt
         refresh_token = conn.get("refreshToken")
         token_url = self.KNOWN_TOKEN_URLS.get(provider.lower())
         client_id = os.environ.get(f"{provider.upper()}_CLIENT_ID")
@@ -171,17 +171,17 @@ class GenericOAuthProvider:
                             "refreshToken": data.get("refresh_token", refresh_token),
                             "expiresAt": now_ms + (exp_in * 1000),
                         }
-                        messages.append(f"Token OAuth renovado com sucesso ({exp_in}s)")
+                        messages.append(f"OAuth token renewed successfully ({exp_in}s)")
                         return True, res, messages
             except Exception as e:
-                messages.append(f"Refresh remoto retornou: {e}")
+                messages.append(f"Remote refresh failed: {e}")
 
-        messages.append(f"Token próximo da expiração ({rem}s restantes)")
+        messages.append(f"Token near expiration ({rem}s remaining)")
         return False, None, messages
 
 
 class ApiKeyProvider:
-    """Gerenciador e sanitizador para conexões de API Key no OmniRoute."""
+    """Manager and health sanitizer for API Key connections in OmniRoute."""
 
     def __init__(self, discovery: Optional[Any] = None):
         self.discovery = discovery
@@ -195,27 +195,28 @@ class ApiKeyProvider:
         res = dict(conn)
         provider = conn.get("provider", "")
 
-        # 1. Verifica se há chave de API mais recente no host
+        # 1. Check if newer API key is available on host
         if self.discovery:
             local = self.discovery.get_credential_for_provider(provider)
             if local and local.get("apiKey") and local.get("apiKey") != conn.get("apiKey"):
                 res["apiKey"] = local["apiKey"]
                 modified = True
                 src = local.get("source_path", "host")
-                messages.append(f"Chave de API sincronizada a partir do host ({src})")
+                messages.append(f"API key synchronized from host ({src})")
 
         if not messages:
-            messages.append("Chave de API operacional e ativa")
+            messages.append("API key operational and healthy")
 
         return modified, res if modified else None, messages
 
 
 class LocalProvider:
-    """Monitor para conexões locais OpenAI-compatíveis (Ollama, vLLM) no OmniRoute."""
+    """Monitor for local OpenAI-compatible connections (Ollama, vLLM) in OmniRoute."""
 
     def can_handle(self, conn: Dict[str, Any]) -> bool:
         p = conn.get("provider", "").lower()
         return "ollama" in p or "openai-compatible" in p or not (conn.get("isOAuth") or conn.get("hasApiKey"))
 
     def check_and_refresh(self, conn: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]], List[str]]:
-        return False, None, ["Conexão local operacional"]
+        return False, None, ["Local connection operational"]
+

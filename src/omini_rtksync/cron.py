@@ -1,4 +1,4 @@
-"""Motor de agendamento em background (CronScheduler) para o OminiRTKSync."""
+"""Background scheduling engine (CronScheduler) for OminiRTKSync."""
 
 import threading
 import time
@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 
 class CronScheduler:
-    """Agendador em background que gerencia a renovação contínua de contas OAuth e integridade de conexões no OmniRoute."""
+    """Background scheduler managing continuous OAuth account renewals and connection health in OmniRoute."""
 
     def __init__(
         self,
@@ -23,7 +23,7 @@ class CronScheduler:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
-        # Métricas
+        # Metrics
         self.total_runs = 0
         self.total_renewals = 0
         self.last_run_at: Optional[str] = None
@@ -71,7 +71,7 @@ class CronScheduler:
         start_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{ts_str}] [CRON] Ciclo disparado ({reason}). Inspecionando conexões de contas OAuth no OmniRoute...", flush=True)
+        print(f"[{ts_str}] [CRON] Cycle triggered ({reason}). Inspecting OAuth account connections in OmniRoute...", flush=True)
 
         try:
             res = self.sync_callback()
@@ -104,7 +104,7 @@ class CronScheduler:
 
         end_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(
-            f"[{end_ts}] [CRON] Ciclo concluído em {duration_ms}ms: {total} contas avaliadas, {refreshed} renovadas via OAuth.",
+            f"[{end_ts}] [CRON] Cycle completed in {duration_ms}ms: {total} accounts evaluated, {refreshed} renewed via OAuth.",
             flush=True,
         )
         return entry
@@ -117,3 +117,4 @@ class CronScheduler:
                 break
             if self.is_running:
                 self._execute_cycle(reason="scheduled_interval")
+

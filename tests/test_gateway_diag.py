@@ -1,4 +1,4 @@
-"""Testes de diagnóstico do gateway OmniRoute e endpoint de teste."""
+"""Diagnostic tests for OmniRoute gateway and test endpoint."""
 
 import base64
 import json

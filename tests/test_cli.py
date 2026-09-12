@@ -1,4 +1,4 @@
-"""Testes unitários da CLI do OminiRTKSync."""
+"""Unit tests for OminiRTKSync CLI."""
 
 import os
 import sqlite3
@@ -51,7 +51,7 @@ class TestOminiCLI(unittest.TestCase):
 
     def test_print_status(self):
         settings = Settings(db_path=self.db_path, enable_web=False)
-        # Deve executar sem levantar exceção
+        # Should execute without raising exceptions
         print_status(settings)
 
     def test_cli_main_status(self):
