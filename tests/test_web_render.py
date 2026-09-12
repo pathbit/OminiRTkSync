@@ -85,10 +85,24 @@ class TestRenderHelpers(unittest.TestCase):
         self.assertIn("2 model(s)", render.render_refresh_reason(local, 900))
 
     def test_unreachable_local_instance_is_reported(self):
+        # Quem diz que a instancia nao respondeu e a sonda, gravada em
+        # testStatus. Um catalogo vazio sozinho nao prova queda nenhuma:
+        # instalacao nova, de pe e sem modelo baixado responde 200 com lista
+        # vazia, e anuncia-la como inalcancavel contradizia o proprio ciclo.
         local = make_conn("ollama-local", "Ollama Local", {
             "apiKey": "k", "baseUrl": "http://localhost:11434/v1",
+            "testStatus": "unreachable",
         })
         self.assertIn("did not answer", render.render_refresh_reason(local, 900))
+
+    def test_an_empty_catalog_is_not_called_unreachable(self):
+        local = make_conn("ollama-local", "Ollama Local", {
+            "apiKey": "k", "baseUrl": "http://localhost:11434/v1",
+            "testStatus": "active", "discoveredModels": [],
+        })
+        frase = render.render_refresh_reason(local, 900)
+        self.assertNotIn("did not answer", frase)
+        self.assertIn("no model installed", frase)
 
 
 class TestDashboardMarkup(unittest.TestCase):

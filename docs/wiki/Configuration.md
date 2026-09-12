@@ -116,4 +116,17 @@ environment:
   - LOG_DIR=/app/data/logs
   - LOG_RETENTION_DAYS=90
   - LOG_TO_STDOUT=0
+# The image ships a HEALTHCHECK that probes /healthz, which only the dashboard
+# serves. With the dashboard off, that probe can never succeed and the container
+# is reported unhealthy forever -- which also stops any `depends_on:
+# service_healthy` from ever being satisfied. Disable the check along with the
+# dashboard:
+healthcheck:
+  disable: true
 ```
+
+> **Portugues:** a imagem traz um HEALTHCHECK que consulta `/healthz`, servido
+> apenas pelo painel. Com o painel desligado a sonda nunca passa e o container
+> fica eternamente marcado como *unhealthy*, travando qualquer
+> `depends_on: service_healthy`. Desligue a verificacao junto com o painel, como
+> no exemplo acima.

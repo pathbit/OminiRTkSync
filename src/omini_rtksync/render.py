@@ -81,10 +81,17 @@ def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LA
     "nada precisava ser renovado" de "a renovação falhou".
     """
     if conn.is_local:
+        # Quem diz se a instância respondeu é a sonda, não o tamanho do
+        # catálogo: uma instalação nova, de pé e sem nenhum modelo baixado,
+        # devolve lista vazia com HTTP 200. Contar modelos aqui a anunciava
+        # como inalcançável, contradizendo o "ativa" que o próprio ciclo
+        # acabara de gravar no banco.
+        if conn.data.get("testStatus") == "unreachable":
+            return translate("reason.local_unreachable", lang)
         models = conn.local_models
         if models:
             return translate("reason.local_ok", lang, count=len(models))
-        return translate("reason.local_unreachable", lang)
+        return translate("reason.local_empty", lang)
 
     if not conn.is_oauth:
         return translate("reason.api_key", lang)
@@ -184,6 +191,41 @@ def render_notice_page(title: str, body: str, link_label: str = "") -> bytes:
 </html>""".encode("utf-8")
 
 
+def egress_chip(conn: Any, sharing_count: int, lang: str) -> str:
+    """Marca de saída de rede da conexão, em modo somente leitura.
+
+    O risco de bloqueio não vem de várias sessões na mesma conta -- isso os
+    provedores aceitam -- e sim de várias contas saindo pelo mesmo endereço.
+    Por isso "compartilhada" só vira aviso a partir da segunda conta nessa
+    situação: sozinha, ela é a única dona daquele IP.
+    """
+    estado = conn.egress_status
+    if estado == "bound":
+        pool = conn.egress_binding or "?"
+        return (
+            '<span class="badge text-bg-success-subtle text-success-emphasis">'
+            f'<i class="bi bi-shield-check me-1" aria-hidden="true"></i>'
+            f'{esc(translate("egress.bound", lang))}: {esc(pool)}</span>'
+        )
+    if estado == "shared":
+        if sharing_count > 1:
+            return (
+                '<span class="badge text-bg-warning-subtle text-warning-emphasis">'
+                f'<i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>'
+                f'{esc(translate("egress.shared", lang, count=sharing_count))}</span>'
+            )
+        return (
+            '<span class="text-secondary">'
+            f'<i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>'
+            f'{esc(translate("egress.single", lang))}</span>'
+        )
+    return (
+        '<span class="text-secondary">'
+        f'<i class="bi bi-question-circle me-1" aria-hidden="true"></i>'
+        f'{esc(translate("egress.unknown", lang))}</span>'
+    )
+
+
 def health_badge(status: str, lang: str) -> str:
     """Monta o badge de saúde com ícone de fonte."""
     css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])
@@ -256,6 +298,13 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
           {esc(translate("connections.empty", lang))}
         </div>"""
 
+    # Uma conta sozinha compartilhando nao e problema: ela e a unica dona
+    # daquele IP. O alerta comeca na segunda, quando o provedor passa a ver
+    # identidades distintas na mesma origem.
+    compartilhando = sum(
+        1 for c in connections if not c.is_local and c.egress_status == "shared"
+    )
+
     rows = []
     for c in connections:
         if c.is_local:
@@ -282,6 +331,13 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
                 )
             if parts:
                 detail = f'<div class="small text-secondary mt-1">{" · ".join(parts)}</div>'
+        else:
+            # Saida de rede: somente leitura. Quem roteia a requisicao e o
+            # gateway; o painel existe para o operador ver quais contas dividem
+            # endereco antes que o provedor veja primeiro.
+            chip = egress_chip(c, compartilhando, lang)
+            if chip:
+                detail = f'<div class="small mt-1">{chip}</div>'
 
         rows.append(f"""
             <tr>

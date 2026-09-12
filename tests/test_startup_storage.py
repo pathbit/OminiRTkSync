@@ -9,7 +9,6 @@ container e o painel voltava a exigir a credencial de recuperacao.
 
 import os
 import tempfile
-import unittest
 import unittest.mock
 
 from omini_rtksync.auth import read_db_credentials, write_db_credentials

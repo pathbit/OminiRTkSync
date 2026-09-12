@@ -247,14 +247,24 @@ class ApiKeyProvider:
 
             if result.state == STATE_VALID:
                 res["testStatus"] = "active"
-                messages.append(f"Chave aceita pelo provedor ({result.detail})")
+                # Um 4xx que nao seja 401/403 continua provando que a
+                # autenticacao passou -- a sonda manda corpo vazio de
+                # proposito, e o provedor so chega a reclamar do corpo depois
+                # de aceitar a chave. Dizer apenas "aceita (HTTP 400)" fazia a
+                # tela parecer errada; a frase agora explica o que o numero
+                # significa.
+                messages.append(
+                    f"Autenticação aceita pelo provedor ({result.detail})"
+                    if result.detail and "200" in str(result.detail)
+                    else f"Autenticação aceita pelo provedor; a sondagem em si foi recusada ({result.detail})"
+                )
             elif result.state == STATE_INVALID:
                 res["testStatus"] = "invalid"
                 messages.append(f"Chave RECUSADA pelo provedor ({result.detail})")
             elif result.state == STATE_RATE_LIMITED:
                 messages.append(f"Provedor aplicou rate limit na validação ({result.detail})")
             elif result.state == STATE_UNREACHABLE:
-                messages.append(f"Provedor inacessível, chave não verificada: {result.detail}")
+                messages.append(f"Chave não verificada: {result.detail}")
             else:
                 messages.append(result.detail or "Credencial não verificável")
 

@@ -146,6 +146,11 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
                 "credentialState": (specific or {}).get("credentialState")
                 or extra.get("credentialState"),
                 "lastTested": item.get("last_tested") or extra.get("lastTested"),
+                # Renovar e verificar são eventos diferentes. Sem projetar este
+                # campo, "última renovação" no painel caía para o horário da
+                # última verificação e um token parado há dias parecia recém
+                # renovado a cada ciclo.
+                "lastRefreshAt": (specific or {}).get("lastRefreshAt") or extra.get("lastRefreshAt"),
                 "lastHealthCheckAt": item.get("last_health_check_at"),
                 "rateLimitedUntil": item.get("rate_limited_until") or extra.get("rateLimitedUntil"),
                 "lastError": item.get("last_error"),
@@ -222,14 +227,43 @@ def update_connection(
             # trata como saudável (src/sse/services/auth.ts::clearAccountError e
             # tokenHealthCheck.ts). 'ok' não é reconhecido e faz a conexão parecer
             # estar em estado de erro.
-            cursor.execute(
-                f"""
-                UPDATE {tbl}
-                SET access_token = ?, refresh_token = ?, expires_at = ?, test_status = 'active', updated_at = ?
-                WHERE id = ?
-                """,
-                (access_token, refresh_token, to_iso_utc(expires_at_ms), now_iso, connection_id),
-            )
+            # O horário da renovação vive no JSON de provider_specific_data:
+            # o schema relacional não tem coluna para ele, e sem esse carimbo o
+            # painel não distingue "renovado agora" de "apenas verificado".
+            especifico = {}
+            if "provider_specific_data" in cols:
+                cursor.execute(
+                    f"SELECT provider_specific_data FROM {tbl} WHERE id = ?", (connection_id,)
+                )
+                linha = cursor.fetchone()
+                if linha:
+                    especifico = _decode_json(linha["provider_specific_data"]) or {}
+                especifico["lastRefreshAt"] = now_iso
+                cursor.execute(
+                    f"""
+                    UPDATE {tbl}
+                    SET access_token = ?, refresh_token = ?, expires_at = ?, test_status = 'active',
+                        provider_specific_data = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        access_token,
+                        refresh_token,
+                        to_iso_utc(expires_at_ms),
+                        json.dumps(especifico),
+                        now_iso,
+                        connection_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    UPDATE {tbl}
+                    SET access_token = ?, refresh_token = ?, expires_at = ?, test_status = 'active', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (access_token, refresh_token, to_iso_utc(expires_at_ms), now_iso, connection_id),
+                )
         elif "data" in cols:
             # Formato compatível com JSON
             cursor.execute(f"SELECT data FROM {tbl} WHERE id = ?", (connection_id,))
@@ -248,6 +282,7 @@ def update_connection(
             # 9Router (resetHealthStateOnActivation em connectionsRepo.js);
             # 'ok' só é reconhecido pela UI e não limpa travas de erro.
             d["testStatus"] = "active"
+            d["lastRefreshAt"] = now_iso
             cursor.execute(
                 f"UPDATE {tbl} SET data = ?, updatedAt = ? WHERE id = ?",
                 (json.dumps(d), now_iso, connection_id),
@@ -319,8 +354,47 @@ def update_connection_health(
             campos.append("provider_specific_data = ?")
             valores.append(json.dumps(atual))
 
+        # Schema de coluna JSON única (o formato que o 9Router usa e que o
+        # OmniRoute aceita em instalações migradas). Sem este ramo a sondagem
+        # era descartada inteira nessas bases: não há `test_status` nem
+        # `provider_specific_data` para receber os campos acima, e a função
+        # saía por `if not campos` como se não houvesse nada a gravar.
+        if "data" in cols and "test_status" not in cols:
+            cursor.execute(f"SELECT data FROM {tbl} WHERE id = ?", (connection_id,))
+            linha = cursor.fetchone()
+            d: Dict[str, Any] = {}
+            if linha and linha["data"]:
+                try:
+                    carregado = json.loads(linha["data"])
+                    if isinstance(carregado, dict):
+                        d = carregado
+                except Exception:
+                    # Coluna corrompida ou em formato inesperado: seguimos com o
+                    # dicionário vazio e regravamos a linha com os campos de
+                    # saúde. Abortar aqui faria uma linha ilegível bloquear para
+                    # sempre a gravação da sondagem — justamente na conexão que
+                    # mais precisa ser diagnosticada.
+                    pass
+            if test_status:
+                d["testStatus"] = test_status
+            if credential_state:
+                d["credentialState"] = credential_state
+                d["credentialCheckedAt"] = now_iso
+            if discovered_models is not None:
+                d["discoveredModels"] = discovered_models
+            if last_error is not None:
+                d["lastError"] = last_error or None
+            if clear_rate_limit:
+                d.pop("rateLimitedUntil", None)
+            d["lastTested"] = now_iso
+            campos.append("data = ?")
+            valores.append(json.dumps(d))
+
         if "updated_at" in cols:
             campos.append("updated_at = ?")
+            valores.append(now_iso)
+        elif "updatedAt" in cols:
+            campos.append("updatedAt = ?")
             valores.append(now_iso)
 
         if not campos:

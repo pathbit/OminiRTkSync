@@ -122,6 +122,17 @@ class OmniSyncEngine:
                     log_msg("STATUS", f"[{provider} · {name}] {nota}")
                     detalhe["actions"].append(nota)
 
+            # Trava de rate limit vencida sai antes de qualquer ramo: a janela
+            # do provedor reabriu, e isso vale para conexão OAuth, de chave ou
+            # local. Deixar a limpeza dentro de um único ramo mantinha a marca
+            # gravada — e a conexão amarela — em todos os outros.
+            trava = parse_expiry_to_ms(c.get("rateLimitedUntil"))
+            if trava is not None and trava <= int(time.time() * 1000):
+                if update_connection_health(self.settings.db_path, cid, clear_rate_limit=True):
+                    nota = "Trava de rate limit vencida removida"
+                    log_msg("STATUS", f"[{provider} · {name}] {nota}")
+                    detalhe["actions"].append(nota)
+
             # 1. Google / Antigravity OAuth
             if provider in ("antigravity", "gemini-cli"):
                 local = self.google_provider.read_local_credential()
@@ -154,8 +165,16 @@ class OmniSyncEngine:
                         # Recusado é motivo para renovar agora, não daqui a pouco.
                         rem_sec = 0
                     elif veredito.state == STATE_VALID:
+                        # Gravar só o resultado da sonda deixava para trás o
+                        # `test_status='invalid'` de uma falha anterior, que não
+                        # caduca sozinho. 'active' é o único valor que o
+                        # OmniRoute trata como saudável (clearAccountError), e é
+                        # o que a credencial acabou de provar que é.
                         update_connection_health(
-                            self.settings.db_path, cid, credential_state=veredito.state
+                            self.settings.db_path,
+                            cid,
+                            test_status="active",
+                            credential_state=veredito.state,
                         )
 
                 if rem_sec <= self.settings.refresh_margin or not c.get("accessToken"):
@@ -249,11 +268,9 @@ class OmniSyncEngine:
                         test_status=data.get("testStatus"),
                         credential_state=data.get("credentialState"),
                         last_error=data.get("lastError"),
-                        # O provider ja apagou a trava vencida de `data`, entao
-                        # inferir "limpar" da ausencia dela invertia o sentido e
-                        # preservava justamente a trava que devia sair. Quem diz
-                        # e a mensagem do provider.
-                        clear_rate_limit=any("rateLimitedUntil" in n for n in notes),
+                        # A trava vencida ja foi removida no topo do laco, para
+                        # qualquer tipo de conexao. Repetir a decisao aqui so
+                        # duplicaria a regra em um unico ramo.
                     )
                 if renovou:
                     refreshed += 1
