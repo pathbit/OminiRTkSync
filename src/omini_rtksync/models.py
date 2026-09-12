@@ -100,6 +100,28 @@ class ConnectionRecord:
         return [str(m) for m in models if m]
 
     @property
+    def egress_status(self) -> str:
+        """Como esta conexao sai para a internet: ``bound``, ``shared`` ou ``unknown``.
+
+        Somente leitura: quem manda no vinculo e o gateway. O OmniRoute guarda
+        os interruptores em ``provider_connections`` (``proxy_enabled`` e
+        ``per_key_proxy_enabled``) e o vinculo em si em ``proxy_assignments``,
+        com ``scope='account'`` e ``scope_id`` igual ao id da conexao. E exibido
+        aqui porque uma conta que compartilha o mesmo endereco de saida com
+        todas as outras e justamente o estado que o operador quer perceber, e
+        nada no painel mostrava isso.
+        """
+        if self.data.get("proxyEnabled") is True or self.data.get("perKeyProxyEnabled") is True:
+            return "bound" if self.data.get("egressProxy") else "shared"
+        return "shared" if "proxyEnabled" in self.data else "unknown"
+
+    @property
+    def egress_binding(self) -> Optional[str]:
+        """Nome ou identificador da saida vinculada, quando ha uma."""
+        vinculo = self.data.get("egressProxy")
+        return str(vinculo) if vinculo else None
+
+    @property
     def expires_at_ms(self) -> Optional[int]:
         """Expiry normalized to epoch milliseconds, whether ISO or numeric."""
         return parse_expiry_to_ms(self.data.get("expiresAt"))

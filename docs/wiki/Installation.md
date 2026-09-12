@@ -125,10 +125,10 @@ source .venv/bin/activate
 PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
-Or with no local install at all:
+Or with no local install at all — the Makefile creates the virtualenv for you:
 
 ```bash
-./run_tests.sh
+make venv && make test
 ```
 
 ---

@@ -39,6 +39,48 @@ def _decode_json(value: Any) -> Optional[Dict[str, Any]]:
     return decoded if isinstance(decoded, dict) else None
 
 
+def _anexar_saida_de_rede(conn: sqlite3.Connection, conexoes: List[Dict[str, Any]]) -> None:
+    """Resolve, por conexao, qual saida de rede o OmniRoute usaria.
+
+    O vinculo vive em ``proxy_assignments`` com ``scope='account'`` e
+    ``scope_id`` igual ao id da conexao; o proxy em si esta em
+    ``proxy_registry``. Tudo em uma consulta so, e em silencio quando a
+    instalacao e antiga demais para ter essas tabelas.
+
+    Somente leitura: nada aqui escreve no banco.
+    """
+    try:
+        existentes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('proxy_assignments','proxy_registry')"
+            )
+        }
+        if {"proxy_assignments", "proxy_registry"} - existentes:
+            return
+
+        vinculos: Dict[str, str] = {}
+        for linha in conn.execute(
+            "SELECT a.scope_id, COALESCE(NULLIF(r.name,''), r.host || ':' || r.port) AS saida "
+            "FROM proxy_assignments a JOIN proxy_registry r ON r.id = a.proxy_id "
+            "WHERE a.scope = 'account' AND a.scope_id IS NOT NULL "
+            "ORDER BY a.position ASC"
+        ):
+            # position ASC e o primeiro vence: e a saida que a rotacao entrega
+            # quando o escopo tem um unico proxy vinculado.
+            vinculos.setdefault(str(linha[0]), str(linha[1]))
+
+        for c in conexoes:
+            saida = vinculos.get(c["id"])
+            if saida:
+                c["egressProxy"] = saida
+    except sqlite3.Error:
+        # Schema mais antigo ou banco em uso por outro processo: a coluna de
+        # saida simplesmente nao aparece, sem derrubar a listagem inteira.
+        return
+
+
 def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
     """Carrega todas as conexões cadastradas no OmniRoute."""
     conn = get_db_connection(db_path)
@@ -108,7 +150,14 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
                 "rateLimitedUntil": item.get("rate_limited_until") or extra.get("rateLimitedUntil"),
                 "lastError": item.get("last_error"),
                 "updatedAt": item.get("updated_at") or item.get("updatedAt"),
+                # Saida de rede: interruptores por conexao do proprio OmniRoute.
+                # O vinculo em si vem de proxy_assignments, resolvido abaixo.
+                "proxyEnabled": bool(item.get("proxy_enabled")),
+                "perKeyProxyEnabled": bool(item.get("per_key_proxy_enabled")),
+                "egressProxy": None,
             })
+
+        _anexar_saida_de_rede(conn, result)
         return result
     finally:
         conn.close()

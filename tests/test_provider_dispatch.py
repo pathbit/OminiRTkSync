@@ -214,3 +214,94 @@ class TestLinhaCruaNaoVaza(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSaidaDeRedePorConta(unittest.TestCase):
+    """Qual endereco de saida cada conta usa — leitura, nunca escrita.
+
+    Compartilhar um unico endereco de saida entre varias contas do mesmo
+    fornecedor e o estado que mais preocupa o operador, e nada no painel
+    mostrava isso. O OmniRoute ja modela tudo: os interruptores ficam em
+    `provider_connections` (`proxy_enabled`, `per_key_proxy_enabled`) e o
+    vinculo em `proxy_assignments` com `scope='account'`.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = os.path.join(self.tmp.name, "storage.sqlite")
+        con = sqlite3.connect(self.db)
+        con.execute(
+            "CREATE TABLE provider_connections ("
+            "id TEXT PRIMARY KEY, provider TEXT, name TEXT, api_key TEXT, "
+            "test_status TEXT, proxy_enabled INTEGER, per_key_proxy_enabled INTEGER, "
+            "provider_specific_data TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        con.execute(
+            "CREATE TABLE proxy_registry (id TEXT PRIMARY KEY, name TEXT, type TEXT, "
+            "host TEXT, port INTEGER, status TEXT)"
+        )
+        con.execute(
+            "CREATE TABLE proxy_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "proxy_id TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT, "
+            "position INTEGER NOT NULL DEFAULT 0)"
+        )
+        con.executemany(
+            "INSERT INTO provider_connections (id, provider, name, api_key, test_status, "
+            "proxy_enabled, per_key_proxy_enabled) VALUES (?,?,?,?,?,?,?)",
+            [
+                ("acc-1", "anthropic", "Conta A", "k1", "active", 1, 0),
+                ("acc-2", "anthropic", "Conta B", "k2", "active", 0, 0),
+            ],
+        )
+        con.execute(
+            "INSERT INTO proxy_registry VALUES ('p-eu','Saida Frankfurt','http','10.8.0.21',8080,'active')"
+        )
+        con.execute(
+            "INSERT INTO proxy_assignments (proxy_id, scope, scope_id, position) "
+            "VALUES ('p-eu','account','acc-1',0)"
+        )
+        con.commit()
+        con.close()
+
+    def por_id(self):
+        return {c["id"]: c for c in get_all_connections(self.db)}
+
+    def test_an_account_with_its_own_egress_is_reported_as_bound(self):
+        conta = self.por_id()["acc-1"]
+        self.assertEqual(conta["egressProxy"], "Saida Frankfurt")
+
+    def test_an_account_without_a_binding_reports_a_shared_egress(self):
+        conta = self.por_id()["acc-2"]
+        self.assertIsNone(conta["egressProxy"])
+
+    def test_an_assignment_of_another_scope_never_binds_the_account(self):
+        con = sqlite3.connect(self.db)
+        con.execute(
+            "INSERT INTO proxy_assignments (proxy_id, scope, scope_id, position) "
+            "VALUES ('p-eu','provider','anthropic',0)"
+        )
+        con.commit()
+        con.close()
+        # Escopo de provedor nao e vinculo de conta: acc-2 continua compartilhada.
+        self.assertIsNone(self.por_id()["acc-2"]["egressProxy"])
+
+    def test_reading_the_binding_writes_nothing(self):
+        antes = sqlite3.connect(self.db).execute(
+            "SELECT count(*) FROM proxy_assignments"
+        ).fetchone()[0]
+        get_all_connections(self.db)
+        depois = sqlite3.connect(self.db).execute(
+            "SELECT count(*) FROM proxy_assignments"
+        ).fetchone()[0]
+        self.assertEqual(antes, depois)
+
+    def test_an_older_schema_without_the_proxy_tables_still_lists_connections(self):
+        con = sqlite3.connect(self.db)
+        con.execute("DROP TABLE proxy_assignments")
+        con.execute("DROP TABLE proxy_registry")
+        con.commit()
+        con.close()
+        conexoes = get_all_connections(self.db)
+        self.assertEqual(len(conexoes), 2)
+        self.assertIsNone(conexoes[0]["egressProxy"])
