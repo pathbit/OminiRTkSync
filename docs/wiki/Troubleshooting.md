@@ -10,11 +10,12 @@ Concrete symptoms, what they actually mean, and what to do.
 `REFRESH_MARGIN` (default 900 s = 15 min). A connection showing *24 min* remaining is correctly
 left alone — renewing early would burn refresh-token rotations for nothing.
 
-The dashboard states this per connection, in the **Renewal diagnosis** column:
+The dashboard states this per connection, in the details modal the **Details** button on the
+connections table opens:
 
 > Outside the 15 min margin: renewal expected in ~9 min
 
-**When it *is* a problem:** the diagnosis column says something else.
+**When it *is* a problem:** the diagnosis in that modal says something else.
 
 | Diagnosis | Meaning | Action |
 | :--- | :--- | :--- |

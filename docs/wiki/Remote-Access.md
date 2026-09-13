@@ -74,10 +74,9 @@ do not control, and you accept that the address is public to whoever has it.
   internet and your accounts is `REQUIRE_LOGIN` and `REQUIRE_API_KEY`.
 - The address changes every time the tunnel is re-enabled, unless you bring your
   own named Cloudflare tunnel.
-- The dashboard blocks the button while login is off — but that gate lives in the
-  screen. The gateway's own `POST /api/tunnel/enable` does not re-check it, so a script or an
-  extension can enable the tunnel while login is still off. Set the two flags
-  first and the question does not arise.
+- Running `cloudflared` yourself means **no screen gates the tunnel**: there is no
+  dashboard check to warn you that login is still off. The command publishes the
+  gateway exactly as it is. Set the two flags first and the question does not arise.
 
 ---
 
@@ -201,11 +200,18 @@ A ordem, portanto, não é preferência:
 3. só então, o túnel ou o Tailscale
 ```
 
-## Opção 1 — túnel Cloudflare (nativo do 9Router)
+## Opção 1 — túnel Cloudflare (sem botão nativo aqui)
 
-A tela **API Endpoint** tem o botão `Tunnel`. Ele registra um quick tunnel da
-Cloudflare e devolve um endereço público `https://…trycloudflare.com` que
-alcança o gateway sem abrir porta nenhuma no seu roteador.
+O OmniRoute não tem botão de túnel próprio — isso é recurso do 9Router. Para
+obter o mesmo resultado, rode o `cloudflared` você mesmo contra a porta
+publicada:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8082
+```
+
+Ele imprime um endereço público `https://…trycloudflare.com` que alcança o seu
+gateway sem abrir porta nenhuma no seu roteador.
 
 **Quando serve:** você precisa de uma URL alcançável de qualquer lugar,
 inclusive de dispositivos que você não controla, e aceita que o endereço seja
@@ -213,16 +219,16 @@ público para quem o tiver.
 
 **O que saber:** a URL é pública e não há lista de permissão — entre a internet
 e as suas contas existem apenas `REQUIRE_LOGIN` e `REQUIRE_API_KEY`. O endereço
-muda a cada reativação, a menos que você use um túnel nomeado seu. E o bloqueio
-do botão enquanto o login está desligado vive **na tela**: o `POST
-/api/tunnel/enable` do gateway não reavalia a condição. Ligue as duas variáveis antes e a
+muda a cada reativação, a menos que você use um túnel nomeado seu. E rodar o
+`cloudflared` à mão significa que **nenhuma tela segura o túnel**: não há
+verificação de painel para avisar que o login continua desligado — o comando
+publica o gateway exatamente como ele está. Ligue as duas variáveis antes e a
 questão não se coloca.
 
-## Opção 2 — Tailscale (nativo do 9Router, e o que preferir)
+## Opção 2 — Tailscale (o que preferir)
 
-A mesma tela tem o botão `Tailscale`, que instala e conecta o daemon. A sua
-máquina entra na sua tailnet e o gateway passa a ser alcançável num endereço
-`100.x.y.z`, ou num nome MagicDNS como `http://seu-host:20128`.
+A sua máquina entra na sua tailnet e o gateway passa a ser alcançável num
+endereço `100.x.y.z`, ou num nome MagicDNS como `http://seu-host:8082`.
 
 **Quando serve:** quase sempre. Só os dispositivos que você cadastrou alcançam o
 gateway — o endereço não é público e não há o que um estranho descubra.

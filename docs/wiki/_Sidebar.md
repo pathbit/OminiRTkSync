@@ -8,6 +8,7 @@
 - [Logging](Logging)
 - [Architecture](Architecture)
 - [Egress and Multi-Session](Egress-And-Multi-Session)
+- [Licensing and Capacity](Licensing-And-Capacity)
 - [Remote Access](Remote-Access)
 - [Egress Testing](Egress-Testing)
 - [Troubleshooting](Troubleshooting)
