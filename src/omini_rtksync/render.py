@@ -15,6 +15,11 @@ from typing import Any, Dict, List, Optional
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES, normalize_language, translate
 
+# Icone da aba, embutido como data URI: /favicon.ico responde 401 atras do
+# Basic Auth, entao um arquivo servido deixaria a aba sem icone ate o
+# operador autenticar -- e a pagina de erro nunca teria icone nenhum.
+FAVICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23310a5c'/><g fill='none' stroke='%23ffffff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M16 27 V17'/><path d='M16 17 L8 9'/><path d='M16 17 L24 9'/><circle cx='8' cy='7' r='2.2'/><circle cx='24' cy='7' r='2.2'/></g></svg>"
+
 BOOTSTRAP_CSS = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
 BOOTSTRAP_ICONS = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
 FLAG_ICONS = "https://cdn.jsdelivr.net/npm/flag-icons@7.2.3/css/flag-icons.min.css"
@@ -172,10 +177,8 @@ def render_notice_page(title: str, body: str, link_label: str = "") -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Favicon embutido: o /favicon.ico do painel responde 401, entao sem
-       isto a aba fica com o icone generico. Cada sincronizador tem o seu. -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23310a5c'/><g fill='none' stroke='%23ffffff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M16 27 V17'/><path d='M16 17 L8 9'/><path d='M16 17 L24 9'/><circle cx='8' cy='7' r='2.2'/><circle cx='24' cy='7' r='2.2'/></g></svg>">
   <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="{FAVICON}">
   <title>{esc(title)}</title>
   <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
   <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
@@ -706,6 +709,7 @@ def render_dashboard(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="{FAVICON}">
   <title>OminiRTKSync</title>
   <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
   <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
