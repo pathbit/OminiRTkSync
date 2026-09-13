@@ -112,6 +112,9 @@ services:
 
 networks:
   egress:
+    # Nome declarado, e nao derivado do nome do projeto: sem isto a rede nasce
+    # como `ominirtk-egress_egress` e o endereco depende do diretorio.
+    name: ominirtk-egress-net
     ipam:
       config:
         - subnet: 172.32.0.0/24

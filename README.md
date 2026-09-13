@@ -135,10 +135,15 @@ docker pull ghcr.io/pathbit/ominirtksync:latest
 Integre o `OminiRTKSync` ao seu `docker-compose.yml` junto ao [OmniRoute](https://github.com/diegosouzapw/OmniRoute):
 
 ```yaml
+name: ominirtksync-stack
+
 services:
-  omniroute:
+  ominirtk-router:
     image: diegosouzapw/omniroute:latest
     container_name: ominirtk-router
+    hostname: ominirtk-router
+    networks:
+      - ominirtksync-net
     restart: unless-stopped
     ports:
       # 20128 dentro do container; 8082 no host.
@@ -156,9 +161,12 @@ services:
     volumes:
       - omniroute_data:/app/data
 
-  ominirtksync:
+  ominirtk-sync:
     image: ghcr.io/pathbit/ominirtksync:latest
     container_name: ominirtk-sync
+    hostname: ominirtk-sync
+    networks:
+      - ominirtksync-net
     restart: unless-stopped
     ports:
       - "127.0.0.1:9092:9090"
@@ -168,7 +176,7 @@ services:
     environment:
       - HOST_HOME=/root/host
       - DB_PATH=/app/data/storage.sqlite
-      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://omniroute:20128}
+      - OMNIROUTE_URL=${OMNIROUTE_URL:-http://ominirtk-router:20128}
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
       - REFRESH_MARGIN=${REFRESH_MARGIN:-900}
       - ENABLE_WEB_DASHBOARD=${ENABLE_WEB_DASHBOARD:-1}
@@ -176,7 +184,7 @@ services:
       - DASHBOARD_USER=${DASHBOARD_USER:-admin}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-}
     depends_on:
-      - omniroute
+      - ominirtk-router
     healthcheck:
       test: ["CMD", "/opt/venv/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=3)"]
       interval: 15s
@@ -186,6 +194,10 @@ services:
 
 volumes:
   omniroute_data:
+
+networks:
+  ominirtksync-net:
+    name: ominirtksync-net
 ```
 
 ---

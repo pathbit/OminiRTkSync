@@ -59,15 +59,23 @@ RUIDO = re.compile(
     r"MIT_?\w*|CI_?CD|OAUTH\w*|PKCE\w*|CRUD|REST_?API|URL_?\w*|URI_?\w*|ID_?\w*)$"
 )
 
+# Diretórios que nunca entram na varredura. Além dos upstreams clonados, os
+# caches de ferramenta: eles são gitignorados, ou seja, NÃO são documentação
+# versionada -- e mesmo assim traziam markdown próprio para dentro do
+# verificador. O `.pytest_cache/README.md` que o pytest escreve ao final da
+# execução cita `--lf` e `--ff`, que são flags do pytest e não deste CLI, então
+# a primeira rodada passava, criava o cache, e a segunda falhava sozinha.
+IGNORADOS = (
+    ".git", "tmp", "node_modules", "__pycache__", ".venv", "assets",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache",
+)
+
 
 def paginas(raiz: str) -> List[str]:
     """Todo markdown versionado do repositório, menos os upstreams clonados."""
     achados = []
     for pasta, dirs, arquivos in os.walk(raiz):
-        dirs[:] = [
-            d for d in dirs
-            if d not in (".git", "tmp", "node_modules", "__pycache__", ".venv", "assets")
-        ]
+        dirs[:] = [d for d in dirs if d not in IGNORADOS]
         for a in arquivos:
             if a.endswith(".md"):
                 achados.append(os.path.join(pasta, a))
@@ -78,10 +86,7 @@ def fonte_do_repo(raiz: str) -> str:
     """Todo o código Python e YAML do repositório, concatenado."""
     partes = []
     for pasta, dirs, arquivos in os.walk(raiz):
-        dirs[:] = [
-            d for d in dirs
-            if d not in (".git", "tmp", "node_modules", "__pycache__", ".venv")
-        ]
+        dirs[:] = [d for d in dirs if d not in IGNORADOS]
         for a in arquivos:
             if a.endswith((".py", ".yml", ".yaml", ".toml", ".cfg", ".sh", ".example")):
                 try:

@@ -47,13 +47,18 @@ class TestVinculoAparece(unittest.TestCase):
     def test_two_accounts_on_the_gateway_address_raise_a_warning(self):
         h = self.html([compartilhada("Conta A"), compartilhada("Conta B")])
         self.assertIn("divide o endereço do gateway", h)
-        self.assertIn("text-bg-warning-subtle", h, "o estado que importa precisa se destacar")
+        # bg-warning-subtle, e nao text-bg-warning-subtle: a segunda NAO existe
+        # no Bootstrap 5.3.3 (so ha text-bg-warning, sem o sufixo), entao o
+        # badge renderizava sem fundo nenhum -- texto solto onde devia haver
+        # destaque. O teste travava a classe inexistente e por isso o defeito
+        # atravessou verde.
+        self.assertIn("bg-warning-subtle", h, "o estado que importa precisa se destacar")
 
     def test_a_single_account_sharing_is_not_a_warning(self):
         # Uma conta sozinha e a unica dona daquele IP: nao ha nada a alertar.
         h = self.html([compartilhada("Conta unica")])
         self.assertIn("única conta", h)
-        self.assertNotIn("text-bg-warning-subtle", h)
+        self.assertNotIn("bg-warning-subtle", h)
 
     def test_a_bound_account_does_not_count_toward_the_warning(self):
         # Duas contas, mas so uma compartilha: ainda nao ha duas no mesmo IP.

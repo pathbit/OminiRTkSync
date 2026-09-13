@@ -139,10 +139,10 @@ def render_last_refresh(conn: Any, lang: str) -> str:
 
     icon = '<i class="bi bi-arrow-repeat me-1 text-success" aria-hidden="true"></i>'
     detail = f'<div class="text-secondary">{esc(ago)}</div>' if ago else ""
-    return f'{icon}<span class="font-monospace">{esc(format_timestamp(stamp))}</span>{detail}'
+    return f'{icon}<span class="font-monospace">{esc(format_timestamp_curto(stamp))}</span>{detail}'
 
 
-def render_remaining(conn: Any, lang: str) -> str:
+def render_remaining(conn: Any, lang: str, curto: bool = False) -> str:
     """Validade restante, sem chamar de ilimitado o que so esta faltando.
 
     Um token OAuth sempre expira. Quando nao ha expiresAt legivel, isso e dado
@@ -160,7 +160,25 @@ def render_remaining(conn: Any, lang: str) -> str:
             '<i class="bi bi-exclamation-triangle" aria-hidden="true"></i>'
             f'{esc(translate("duration.unknown_expiry", lang))}</span>'
         )
-    return f'<span class="text-secondary">{esc(translate("duration.no_expiry", lang))}</span>'
+    # Na celula cabe o fato; a razao ("chave estatica") fica no modal.
+    chave = "duration.no_expiry_short" if curto else "duration.no_expiry"
+    return f'<span class="text-secondary">{esc(translate(chave, lang))}</span>'
+
+
+def format_timestamp_curto(value: Optional[str]) -> str:
+    """Data enxuta para a celula da tabela: dia/mes e hora, sem ano nem segundos.
+
+    A forma completa ("2026-09-13 18:40:52 UTC") nao cabe na coluna e era
+    cortada no meio, o que deixava a informacao pior do que util. O carimbo
+    inteiro continua no modal de detalhe, a um clique da linha.
+    """
+    if not value:
+        return "—"
+    try:
+        momento = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return format_timestamp(value)
+    return momento.strftime("%d/%m %H:%M")
 
 
 def render_notice_page(title: str, body: str, link_label: str = "") -> bytes:
@@ -209,14 +227,14 @@ def egress_chip(conn: Any, sharing_count: int, lang: str) -> str:
     if estado == "bound":
         pool = conn.egress_binding or "?"
         return (
-            '<span class="badge text-bg-success-subtle text-success-emphasis">'
+            '<span class="badge bg-success-subtle text-success-emphasis">'
             f'<i class="bi bi-shield-check me-1" aria-hidden="true"></i>'
             f'{esc(translate("egress.bound", lang))}: {esc(pool)}</span>'
         )
     if estado == "shared":
         if sharing_count > 1:
             return (
-                '<span class="badge text-bg-warning-subtle text-warning-emphasis">'
+                '<span class="badge bg-warning-subtle text-warning-emphasis">'
                 f'<i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>'
                 f'{esc(translate("egress.shared", lang, count=sharing_count))}</span>'
             )
@@ -230,6 +248,73 @@ def egress_chip(conn: Any, sharing_count: int, lang: str) -> str:
         f'<i class="bi bi-question-circle me-1" aria-hidden="true"></i>'
         f'{esc(translate("egress.unknown", lang))}</span>'
     )
+
+
+def render_login_page(lang: str = DEFAULT_LANGUAGE, erro: str = "") -> bytes:
+    """Formulario de entrada, com a mesma casca e a mesma paleta do painel.
+
+    Existe porque o dialogo do Basic Auth e uma janela do NAVEGADOR: nao se
+    traduz, nao se estiliza, nao oferece logout e nao e HTML -- qualquer
+    ferramenta que dirija um navegador para no dialogo, porque nao ha nada na
+    pagina para preencher. Esta pagina resolve os quatro de uma vez.
+    """
+    lang = normalize_language(lang)
+    aviso = (
+        f'<div class="alert alert-danger d-flex align-items-center gap-2 mb-3" role="alert">'
+        f'<i class="bi bi-exclamation-octagon-fill" aria-hidden="true"></i>'
+        f'<span>{esc(erro)}</span></div>'
+        if erro
+        else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="{esc(lang)}" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="{FAVICON}">
+  <title>OminiRTKSync</title>
+  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
+  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
+  <style>
+    :root {{ --bg: #240046; --surface: #310a5c; --line: #4d1d88;
+             --accent: #b57bff; --text: #e6e8ee; }}
+    body {{ background: var(--bg); color: var(--text); font-family: {FONT_STACK}; }}
+    .card {{ background: var(--surface); border: 1px solid var(--line); }}
+    .btn-primary {{ --bs-btn-bg: var(--accent); --bs-btn-border-color: var(--accent);
+                    --bs-btn-color: var(--bg); --bs-btn-hover-bg: var(--accent);
+                    --bs-btn-hover-border-color: var(--accent); --bs-btn-hover-color: var(--bg); }}
+    .form-control {{ background: var(--bg); border-color: var(--line); color: var(--text); }}
+    .form-control:focus {{ background: var(--bg); color: var(--text);
+                           border-color: var(--accent); box-shadow: none; }}
+  </style>
+</head>
+<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
+  <main class="card" style="max-width:24rem;width:100%">
+    <div class="card-body p-4">
+      <h1 class="h5 mb-1 d-flex align-items-center gap-2">
+        <i class="bi bi-shield-lock" aria-hidden="true"></i>OminiRTKSync
+      </h1>
+      <p class="text-secondary small mb-4">{esc(translate("auth.login_intro", lang))}</p>
+      {aviso}
+      <form method="post" action="/login">
+        <div class="mb-3">
+          <label class="form-label small" for="usuario">{esc(translate("auth.user", lang))}</label>
+          <input class="form-control" id="usuario" name="usuario" autocomplete="username" autofocus required>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small" for="senha">{esc(translate("auth.password", lang))}</label>
+          <input class="form-control" id="senha" name="senha" type="password"
+                 autocomplete="current-password" required>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">
+          <i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>{esc(translate("auth.enter", lang))}
+        </button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>""".encode("utf-8")
 
 
 def health_badge(status: str, lang: str) -> str:
@@ -410,7 +495,7 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
                 <i class="bi {kind_icon} me-1 text-secondary" aria-hidden="true"></i>{esc(kind)}
               </td>
               <td>{health_badge(c.health_status, lang)}</td>
-              <td class="text-nowrap">{render_remaining(c, lang)}</td>
+              <td class="text-nowrap">{render_remaining(c, lang, curto=True)}</td>
               <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
               <td class="text-end">
                 <button class="btn btn-outline-light btn-sm py-0 px-2" type="button"
@@ -424,7 +509,7 @@ def render_connections_table(connections: List[Any], refresh_margin: int, lang: 
 
     return f"""
         <div class="table-responsive">
-          <table class="table table-dark table-hover align-middle mb-0 tabela-conexoes">
+          <table class="table table-dark table-hover align-middle mb-0 tabela-dominio">
             <colgroup>
               <col class="c-provedor"><col class="c-nome"><col class="c-tipo">
               <col class="c-status"><col class="c-validade"><col class="c-renovacao">
@@ -561,12 +646,12 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
             <i class="bi {state_icon}" aria-hidden="true"></i><span>{esc(state_text)}</span>
           </p>
           <dl class="row mb-0 small">
-            <dt class="col-6 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
-            <dd class="col-6 text-end font-monospace">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
-            <dt class="col-6 text-secondary fw-normal">{esc(translate("cron.total_renewals", lang))}</dt>
-            <dd class="col-6 text-end font-monospace">{esc(cron.get("totalRenewals", 0))}</dd>
-            <dt class="col-12 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
-            <dd class="col-12 font-monospace small mb-0 {'text-danger' if failed else ''}">
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
+            <dd class="col-7 text-end font-monospace">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("cron.total_renewals", lang))}</dt>
+            <dd class="col-7 text-end font-monospace">{esc(cron.get("totalRenewals", 0))}</dd>
+            <dt class="col-5 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
+            <dd class="col-7 text-end font-monospace small mb-0 mt-2 {'text-danger' if failed else ''}">
               {esc(translate("cron.result_line", lang,
                              inspected=last.get("totalInspected", 0),
                              refreshed=last.get("refreshedCount", 0),
@@ -622,7 +707,10 @@ def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str
             <dd class="col-7 text-end font-monospace">{esc(gateway.get("latencyMs", "—"))} ms</dd>
             <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.database", lang))}</dt>
             <dd class="col-7 text-end font-monospace text-truncate" title="{esc(db_path)}">
-              {esc(gateway.get("dbSummary") or "—")}
+              {esc(translate("gateway.db_summary", lang,
+                            connections=gateway.get("dbConnections", 0),
+                            combos=gateway.get("dbCombos", 0))
+                   if db_ok else translate("gateway.db_missing", lang))}
             </dd>
             <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.diagnostics", lang))}</dt>
             <dd class="col-7 text-end font-monospace mb-0 {tone}">{esc(diagnosis)}</dd>
@@ -780,25 +868,33 @@ def render_dashboard(
        "Tipo" e "Status", de largura fixa, sobravam espaco. Declarar a divisao
        resolve na origem, e `table-layout: fixed` faz o navegador respeita-la em
        vez de recalcular pelo conteudo. */
-    .tabela-conexoes {{ table-layout: fixed; }}
-    .tabela-conexoes th, .tabela-conexoes td {{ padding: .6rem .5rem; vertical-align: top; }}
-    .tabela-conexoes col.c-provedor    {{ width: 9rem; }}
-    .tabela-conexoes col.c-nome        {{ width: auto; }}
-    .tabela-conexoes col.c-tipo        {{ width: 8rem; }}
-    .tabela-conexoes col.c-status      {{ width: 6.5rem; }}
-    .tabela-conexoes col.c-validade    {{ width: 10rem; }}
-    .tabela-conexoes col.c-renovacao   {{ width: 12rem; }}
-    .tabela-conexoes col.c-detalhe     {{ width: 5rem; }}
+    .tabela-dominio {{ table-layout: fixed; }}
+    .tabela-dominio th, .tabela-dominio td {{ padding: .6rem .5rem; vertical-align: top; }}
+    /* Com table-layout:fixed a largura da coluna e lei, e text-nowrap
+       (white-space:nowrap!important) sem overflow:hidden nao corta nem quebra:
+       o excesso se desenha POR CIMA da coluna vizinha. Foi assim que a validade
+       apareceu escrita sobre a data de renovacao. O corte com reticencias
+       mantem a linha legivel; o texto inteiro fica no botao (i) da linha. */
+    .tabela-dominio td, .tabela-dominio th {{ overflow: hidden; text-overflow: ellipsis; }}
+    /* O cabecalho nao pode quebrar no meio da palavra ("Detalhe" / "s"). */
+    .tabela-dominio th {{ white-space: nowrap; }}
+    .tabela-dominio col.c-provedor    {{ width: 8rem; }}
+    .tabela-dominio col.c-nome        {{ width: auto; }}
+    .tabela-dominio col.c-tipo        {{ width: 9.5rem; }}
+    .tabela-dominio col.c-status      {{ width: 9.5rem; }}
+    .tabela-dominio col.c-validade    {{ width: 11rem; }}
+    .tabela-dominio col.c-renovacao   {{ width: 9rem; }}
+    .tabela-dominio col.c-detalhe     {{ width: 5.5rem; }}
     /* O nome do provedor e um identificador longo e sem espaco
        (openai-compatible-chat-ollama-local): sem isto ele estoura a coluna ou
        forca a tabela a rolar horizontalmente inteira. */
-    .tabela-conexoes .provider-chip {{ display: inline-block; max-width: 100%;
+    .tabela-dominio .provider-chip {{ display: inline-block; max-width: 100%;
                                        overflow-wrap: anywhere; white-space: normal; }}
-    .tabela-conexoes .diagnostico {{ overflow-wrap: anywhere; }}
+    .tabela-dominio .diagnostico {{ overflow-wrap: anywhere; }}
     /* Em tela estreita a tabela rola sozinha, em vez de espremer as colunas
        ate o texto virar uma palavra por linha. */
     @media (max-width: 1200px) {{
-      .tabela-conexoes {{ min-width: 68rem; }}
+      .tabela-dominio {{ min-width: 68rem; }}
     }}
   </style>
 </head>
@@ -829,6 +925,12 @@ def render_dashboard(
         <button class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
           <i class="bi bi-key me-1" aria-hidden="true"></i>{esc(translate("action.access", lang))}
         </button>
+        <form method="post" action="/logout" class="m-0">
+          <button class="btn btn-outline-light btn-sm" type="submit"
+                  title="{esc(translate("auth.logout", lang))}">
+            <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+          </button>
+        </form>
         <form method="post" action="/acoes/cron" class="m-0">
           <button class="btn btn-primary btn-sm" type="submit">
             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>{esc(translate("action.sync_now", lang))}
