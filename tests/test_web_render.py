@@ -160,7 +160,10 @@ class TestDashboardMarkup(unittest.TestCase):
 
     def test_refresh_controls_are_present(self):
         page = self._page()
-        self.assertIn('action="/acoes/atualizar"', page)     # botão Atualizar
+        # "Atualizar" saiu da barra: recarregar a página e rodar o ciclo viraram
+        # um botão só ("Sync now"), porque dois botões vizinhos que parecem
+        # fazer a mesma coisa fazem o operador escolher no escuro.
+        self.assertIn('action="/logout"', page)              # botão Sair
         # Sincronizar dispara pelo agendador, para que a execucao manual
         # apareca no historico junto com as automaticas.
         self.assertIn('action="/acoes/cron"', page)   # Sincronizar agora

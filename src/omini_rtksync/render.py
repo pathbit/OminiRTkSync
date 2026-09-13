@@ -18,7 +18,7 @@ from .i18n import DEFAULT_LANGUAGE, LANGUAGES, normalize_language, translate
 # Icone da aba, embutido como data URI: /favicon.ico responde 401 atras do
 # Basic Auth, entao um arquivo servido deixaria a aba sem icone ate o
 # operador autenticar -- e a pagina de erro nunca teria icone nenhum.
-FAVICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23310a5c'/><g fill='none' stroke='%23ffffff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M16 27 V17'/><path d='M16 17 L8 9'/><path d='M16 17 L24 9'/><circle cx='8' cy='7' r='2.2'/><circle cx='24' cy='7' r='2.2'/></g></svg>"
+FAVICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23310a5c'/><g transform='translate(6 6) scale(1.25)' fill='%23ffffff'><path d='M7 16h2V6h5a1 1 0 0 0 .8-.4l.975-1.3a.5.5 0 0 0 0-.6L14.8 2.4A1 1 0 0 0 14 2H9v-.586a1 1 0 0 0-2 0V7H2a1 1 0 0 0-.8.4L.225 8.7a.5.5 0 0 0 0 .6l.975 1.3a1 1 0 0 0 .8.4h5z'/></g></svg>"
 
 BOOTSTRAP_CSS = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
 BOOTSTRAP_ICONS = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
@@ -73,10 +73,24 @@ def format_duration(seconds: Optional[int], lang: str = DEFAULT_LANGUAGE) -> str
 
 
 def format_timestamp(value: Optional[str]) -> str:
-    """Normaliza um timestamp ISO para exibição."""
+    """Normaliza um timestamp ISO para exibição.
+
+    Troca APENAS o "T" que separa data de hora, e não todo "T" da string. A
+    versão anterior fazia `.replace("T", " ")` no texto inteiro, o que a tornava
+    destrutiva ao ser aplicada duas vezes: a primeira passada produzia
+    "2026-09-13 19:08:48 UTC", e a segunda comia o "T" de "UTC" e escrevia
+    "19:08:48 U C" na tela. Um defeito que só aparece quando alguém formata um
+    valor já formatado -- e isso é fácil de acontecer sem ninguém notar.
+    """
     if not value:
         return "—"
-    return str(value).replace("T", " ").replace("Z", " UTC")
+    texto = str(value)
+    if texto.endswith("Z"):
+        texto = texto[:-1] + " UTC"
+    # O separador ISO é o "T" na posição 10 (AAAA-MM-DDTHH:MM:SS).
+    if len(texto) > 10 and texto[10] == "T":
+        texto = texto[:10] + " " + texto[11:]
+    return texto
 
 
 def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LANGUAGE) -> str:
@@ -670,6 +684,11 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
               <i class="bi bi-list-columns-reverse me-1" aria-hidden="true"></i>Logs
               {'<span class="badge text-bg-danger ms-1">!</span>' if failed else ""}
             </button>
+            <form method="post" action="/acoes/cron" class="m-0">
+              <button class="btn btn-outline-light btn-sm" type="submit">
+                <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{esc(translate("cron.run_now", lang))}
+              </button>
+            </form>
           </div>
         </div>
         <div class="card-body">
@@ -677,12 +696,12 @@ def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
             <i class="bi {state_icon}" aria-hidden="true"></i><span>{esc(state_text)}</span>
           </p>
           <dl class="row mb-0 small">
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
-            <dd class="col-7 text-end font-monospace">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("cron.total_renewals", lang))}</dt>
-            <dd class="col-7 text-end font-monospace">{esc(cron.get("totalRenewals", 0))}</dd>
-            <dt class="col-5 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
-            <dd class="col-7 text-end font-monospace small mb-0 mt-2 {'text-danger' if failed else ''}">
+            <dt class="col-4 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
+            <dd class="col-8 text-end font-monospace text-nowrap">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
+            <dt class="col-4 text-secondary fw-normal">{esc(translate("cron.total_renewals", lang))}</dt>
+            <dd class="col-8 text-end font-monospace">{esc(cron.get("totalRenewals", 0))}</dd>
+            <dt class="col-4 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
+            <dd class="col-8 text-end font-monospace small mb-0 mt-2 {'text-danger' if failed else ''}">
               {esc(translate("cron.result_line", lang,
                              inspected=last.get("totalInspected", 0),
                              refreshed=last.get("refreshedCount", 0),
@@ -761,7 +780,7 @@ def render_flash(flash: Optional[Dict[str, str]]) -> str:
         "info": "bi-info-circle-fill",
     }.get(tone, "bi-info-circle-fill")
     return f"""
-      <div class="alert alert-{esc(tone)} d-flex align-items-center gap-2" role="status">
+      <div class="alert alert-{esc(tone)} d-flex align-items-center gap-2" role="status" data-aviso>
         <i class="bi {icon}" aria-hidden="true"></i>
         <div>{esc(flash.get("message", ""))}</div>
       </div>"""
@@ -914,7 +933,7 @@ def render_dashboard(
     .tabela-dominio col.c-tipo        {{ width: 9.5rem; }}
     .tabela-dominio col.c-status      {{ width: 9.5rem; }}
     .tabela-dominio col.c-validade    {{ width: 11rem; }}
-    .tabela-dominio col.c-renovacao   {{ width: 9rem; }}
+    .tabela-dominio col.c-renovacao   {{ width: 10.5rem; }}
     .tabela-dominio col.c-detalhe     {{ width: 5.5rem; }}
     /* O nome do provedor e um identificador longo e sem espaco
        (openai-compatible-chat-ollama-local): sem isto ele estoura a coluna ou
@@ -947,24 +966,14 @@ def render_dashboard(
       </div>
       <div class="barra-acoes">
         {render_language_switcher(lang)}
-        <form method="post" action="/acoes/atualizar" class="m-0 d-inline">
-          <button class="btn btn-outline-light btn-sm" type="submit"
-                  title="{esc(translate("action.refresh_title", lang))}">
-            <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>{esc(translate("action.refresh", lang))}
-          </button>
-        </form>
-        <button class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
-          <i class="bi bi-key me-1" aria-hidden="true"></i>{esc(translate("action.access", lang))}
-        </button>
-        <form method="post" action="/logout" class="m-0">
-          <button class="btn btn-outline-light btn-sm" type="submit"
-                  title="{esc(translate("auth.logout", lang))}">
-            <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
-          </button>
-        </form>
         <form method="post" action="/acoes/cron" class="m-0">
           <button class="btn btn-primary btn-sm" type="submit">
             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>{esc(translate("action.sync_now", lang))}
+          </button>
+        </form>
+        <form method="post" action="/logout" class="m-0">
+          <button class="btn btn-outline-light btn-sm" type="submit">
+            <i class="bi bi-box-arrow-right me-1" aria-hidden="true"></i>{esc(translate("auth.logout", lang))}
           </button>
         </form>
       </div>
@@ -999,6 +1008,10 @@ def render_dashboard(
       <span>
         <i class="bi bi-person-circle me-1" aria-hidden="true"></i>{esc(translate("footer.signed_in", lang))}
         <span class="font-monospace">{esc(current_user)}</span>
+        <button class="btn btn-link btn-sm p-0 ms-2 align-baseline text-secondary"
+                data-bs-toggle="modal" data-bs-target="#modalCredenciais">
+          <i class="bi bi-key me-1" aria-hidden="true"></i>{esc(translate("action.change_credentials", lang))}
+        </button>
       </span>
       <span>
         <i class="bi bi-clock-history me-1" aria-hidden="true"></i>{esc(translate("footer.generated", lang))}
@@ -1049,6 +1062,21 @@ def render_dashboard(
                .prop('disabled', true)
                .find('i').attr('class', 'bi bi-hourglass-split me-1');
       }});
+
+      // O aviso da ultima acao viaja na querystring (POST-Redirect-GET, para o
+      // F5 nao repetir a acao). O efeito colateral e que ele fica: a URL guarda
+      // o texto, e recarregar traz de volta uma mensagem de algo que ja
+      // aconteceu. Assim que a pagina desenha, a querystring e limpa do
+      // historico -- sem nova requisicao -- e o aviso some sozinho.
+      var $aviso = $('[data-aviso]');
+      if ($aviso.length) {{
+        if (window.history.replaceState) {{
+          window.history.replaceState({{}}, document.title, window.location.pathname);
+        }}
+        window.setTimeout(function () {{
+          $aviso.fadeOut(400, function () {{ $(this).remove(); }});
+        }}, 6000);
+      }}
     }});
   </script>
 </body>
