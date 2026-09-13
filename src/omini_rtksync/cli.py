@@ -442,7 +442,15 @@ def main():
     parser.add_argument("--no-web", action="store_true", help="Desativa dashboard web")
     parser.add_argument("--port", type=int, help="Porta do dashboard web (padrão: 9090)")
     parser.add_argument("--user", type=str, help="Usuário para autenticação no dashboard web (padrão: admin)")
-    parser.add_argument("--password", type=str, help="Senha para autenticação no dashboard web (padrão: pathbit)")
+    # Sem citar valor: um texto de --help é arquivo versionado, e uma senha de
+    # fábrica anunciada ali vira a senha real de toda instalação que copiou e
+    # colou. O padrão, além disso, não é "pathbit" -- é vazio (config.py), e o
+    # painel gera uma credencial de recuperação no primeiro boot.
+    parser.add_argument(
+        "--password",
+        type=str,
+        help="Senha para autenticação no dashboard web (sem padrão: defina DASHBOARD_PASSWORD)",
+    )
 
     args = parser.parse_args()
     settings = Settings.from_env()
