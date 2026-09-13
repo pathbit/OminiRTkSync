@@ -46,6 +46,22 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class OminiDashboardHandler(BaseHTTPRequestHandler):
+
+    # O cabecalho Server ia na PRIMEIRA linha de toda resposta -- inclusive no
+    # 401, antes de qualquer autenticacao -- anunciando "BaseHTTP/0.6
+    # Python/3.14.7", ou seja, a versao exata do interpretador, logo acima da
+    # CSP e do X-Frame-Options que o resto do cabecalho instala. Versao exata e
+    # o que um scanner precisa para escolher o exploit certo.
+    #
+    # version_string() tambem e sobrescrito porque o BaseHTTPRequestHandler
+    # concatena server_version + " " + sys_version: com sys_version vazio, a
+    # resposta sai com um espaco sobrando no fim do valor.
+    server_version = "OminiRTKSync"
+    sys_version = ""
+
+    def version_string(self) -> str:
+        return self.server_version
+
     settings: Optional[Settings] = None
     db_path: str = ""
     omniroute_url: str = ""
