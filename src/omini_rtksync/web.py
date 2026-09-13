@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -14,11 +15,17 @@ from typing import Any, Callable, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .config import Settings
-from .database import get_all_combos, get_all_connections
+from .database import (
+    get_all_api_keys,
+    get_all_combos,
+    get_all_connections,
+    get_all_registered_models,
+)
 from .i18n import DEFAULT_LANGUAGE, normalize_language, translate
-from .models import ConnectionRecord
+from .models import ConnectionRecord, RegisteredModelRecord, VirtualKeyRecord
+from .logs import get_logger
 from .prefs import get_preference, resolve_prefs_path, set_preference
-from . import protecao, sessao
+from . import protecao, sessao, sso
 from .render import render_dashboard, render_login_page, render_notice_page
 
 # Tempo de vida do resultado da sondagem ao gateway. O /healthz é chamado a cada
@@ -203,9 +210,16 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         "/", "/index.html", "/healthz", "/login", "/logout", "/robots.txt",
         "/favicon.ico", "/credenciais-atualizadas", "/logs",
     }
-    PREFIXOS_CONHECIDOS = ("/api/", "/acoes/")
+    PREFIXOS_CONHECIDOS = ("/api/", "/acoes/", "/sso/")
 
     def rota_existe(self, caminho: str) -> bool:
+        # SEM CONFIGURACAO, NADA MUDA: as rotas de SSO nao existem enquanto o
+        # SSO nao estiver ligado e completo. Nao e um 403 nem uma pagina
+        # dizendo "configure primeiro" -- e 404, pelo mesmo caminho de qualquer
+        # rota que este servidor nao serve. Um painel que nunca ligou SSO nao
+        # tem nem superficie nova para alguem sondar.
+        if caminho.startswith("/sso/"):
+            return bool(self.provedor_de_sso())
         return caminho in self.ROTAS_CONHECIDAS or caminho.startswith(self.PREFIXOS_CONHECIDOS)
 
     def recusa_rota_desconhecida(self, caminho: str) -> bool:
@@ -238,6 +252,20 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 
         if urlparse(self.path).path == "/login":
             self.serve_login_page()
+            return
+
+        # As duas rotas do fluxo federado sao publicas pelo mesmo motivo do
+        # /login: a ida ao provedor de identidade e a volta dele acontecem sem
+        # sessao -- e a sessao que elas existem para criar. Ambas passam pelo
+        # mesmo teto por endereco do formulario, e ambas so existem quando o
+        # SSO esta ligado (`rota_existe`); fora disso a requisicao nem chega
+        # aqui, morre em 404.
+        if urlparse(self.path).path == "/sso/oidc/iniciar":
+            self.handle_sso_iniciar()
+            return
+
+        if urlparse(self.path).path == "/sso/oidc/callback":
+            self.handle_sso_callback()
             return
 
         # Servida antes de require_auth de proposito: o navegador ainda esta
@@ -367,6 +395,153 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         except CLIENT_DISCONNECT_ERRORS:
             self.close_connection = True
 
+    # -----------------------------------------------------------------------
+    # Entrada federada (SSO). Ver src/omini_rtksync/sso.py.
+    # -----------------------------------------------------------------------
+
+    def arquivo_do_segredo_sso(self) -> str:
+        """O segredo do cliente OAuth mora ao lado da credencial de recuperacao."""
+        base = os.path.dirname(self.settings.get_auth_file_path()) if self.settings else ""
+        return sso.caminho_do_segredo(base or os.path.expanduser("~"))
+
+    def config_de_sso(self) -> Dict[str, str]:
+        return sso.ler_config(self.prefs_path())
+
+    def provedor_de_sso(self, config: Optional[Dict[str, str]] = None) -> str:
+        """Qual provedor responde agora. Vazio significa desligado."""
+        try:
+            config = self.config_de_sso() if config is None else config
+            return sso.provedor_ativo(config, self.arquivo_do_segredo_sso())
+        except Exception:
+            # Banco ilegivel, diretorio sumido: SSO desligado e o painel segue
+            # servindo o formulario local, que e o que nao pode faltar.
+            return ""
+
+    def handle_sso_iniciar(self) -> None:
+        """Manda o navegador ao provedor de identidade, guardando o estado."""
+        endereco = protecao.endereco_do_cliente(self.client_address)
+        pode, espere = protecao.registra_tentativa(endereco)
+        if not pode:
+            self.responde_429(espere)
+            return
+
+        config = self.config_de_sso()
+        if self.provedor_de_sso(config) != "oidc":
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+
+        try:
+            documento = sso.descobre(config["oidc_issuer"])
+            state = secrets.token_urlsafe(32)
+            nonce = secrets.token_urlsafe(32)
+            verificador, desafio = sso.novo_desafio_pkce()
+            destino = sso.url_de_autorizacao(config, documento, state, nonce, desafio)
+        except Exception as erro:
+            get_logger().warning(
+                "SSO: nao foi possivel iniciar a ida ao provedor: %s",
+                getattr(erro, "detalhe", type(erro).__name__),
+            )
+            self.serve_login_page(translate("sso.failed", self.resolve_language()))
+            return
+
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", destino)
+        self.send_header(
+            "Set-Cookie",
+            sessao.cabecalho_para_gravar_estado_sso(
+                sessao.emitir_estado_sso(state, nonce, verificador)
+            ),
+        )
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def handle_sso_callback(self) -> None:
+        """Valida a volta do provedor e emite o MESMO cookie do formulario."""
+        endereco = protecao.endereco_do_cliente(self.client_address)
+        pode, espere = protecao.registra_tentativa(endereco)
+        if not pode:
+            self.responde_429(espere)
+            return
+
+        lang = self.resolve_language()
+        config = self.config_de_sso()
+        if self.provedor_de_sso(config) != "oidc":
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+
+        consulta = parse_qs(urlparse(self.path).query)
+        try:
+            email = sso.conclui_callback(
+                config,
+                self.arquivo_do_segredo_sso(),
+                state_da_query=(consulta.get("state") or [""])[0],
+                codigo=(consulta.get("code") or [""])[0],
+                erro_da_query=(consulta.get("error") or [""])[0],
+                cookie_de_estado=sessao.ler_estado_do_cabecalho(self.headers.get("Cookie", "")),
+            )
+        except Exception as erro:
+            # UMA mensagem para todas as falhas. Dizer se parou no `state`, no
+            # prazo do token ou na lista de autorizados conta ao atacante em
+            # que ponto ele esta. O detalhe vai para o log interno -- e nele
+            # nao entra codigo, token nem segredo.
+            get_logger().warning(
+                "SSO: entrada recusada (%s)", getattr(erro, "detalhe", type(erro).__name__)
+            )
+            protecao.anota_falha(endereco)
+            self.responde_falha_de_sso(lang)
+            return
+
+        protecao.limpa_apos_sucesso(endereco)
+        get_logger().info("SSO: sessao emitida para %s", email)
+
+        # 200 com meta refresh, e NUNCA 302 para "/": numa cadeia de
+        # redirecionamento iniciada por outro site o navegador nao envia o
+        # cookie de sessao `SameSite=Strict` no salto seguinte, e o operador
+        # cairia em /login com o cookie valido no bolso.
+        #
+        # O destino e SEMPRE "/": nenhum parametro da query vira destino, ou o
+        # login viraria um redirecionamento aberto ja autenticado.
+        payload = render_notice_page(
+            translate("sso.signing_in", lang),
+            translate("sso.signing_in_body", lang),
+            refresh_url="/",
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # O prefixo "sso:" distingue no log quem entrou pela porta federada,
+        # sem criar uma segunda forma de sessao: o cookie e o mesmo.
+        self.send_header(
+            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(f"sso:{email}"))
+        )
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado_sso())
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(payload)
+
+    def responde_falha_de_sso(self, lang: str) -> None:
+        """Volta ao formulario local com a mensagem generica, e sem o estado."""
+        payload = render_login_page(lang, translate("sso.failed", lang))
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado_sso())
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(payload)
+
+    def confere_senha_local(self, senha: str) -> bool:
+        """Confere a senha do painel, aceitando tambem a de recuperacao."""
+        if not self.settings or not senha:
+            return False
+        usuario, _ = self.settings.get_auth_credentials()
+        if self.settings.verify_credentials(usuario, senha):
+            return True
+        # A credencial de recuperacao entra sempre, provedor vivo ou morto: e
+        # ela que salva quem precisa DESLIGAR o SSO e nao lembra a senha.
+        return self.settings.verify_credentials("admin", senha)
+
     def serve_login_page(self, erro: str = "") -> None:
         """Formulario de entrada: a porta do navegador para o painel."""
         lang = self.resolve_language()
@@ -375,7 +550,22 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         endereco = protecao.endereco_do_cliente(self.client_address)
         desafio = protecao.novo_desafio() if protecao.precisa_de_desafio(endereco) else ""
         dificuldade = protecao.dificuldade_para(endereco)
-        payload = render_login_page(lang, erro, desafio, dificuldade)
+
+        # O botao de SSO so e desenhado quando ha configuracao completa, ligada
+        # E o provedor respondeu a descoberta. Se ele nao responde, o botao sai
+        # da tela com um aviso -- o formulario local nunca e bloqueado por isso.
+        sso_nome, sso_indisponivel = "", False
+        config = self.config_de_sso()
+        if self.provedor_de_sso(config) == "oidc":
+            try:
+                sso.descobre(config["oidc_issuer"])
+                sso_nome = sso.nome_do_provedor(config)
+            except Exception:
+                sso_indisponivel = True
+
+        payload = render_login_page(
+            lang, erro, desafio, dificuldade, sso_nome=sso_nome, sso_indisponivel=sso_indisponivel
+        )
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -721,6 +911,8 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         """Le tudo o que a pagina precisa. Roda no servidor: o SQLite nunca sai daqui."""
         rows: list = []
         combos: list = []
+        key_rows: list = []
+        model_rows: list = []
         db_exists = bool(self.db_path and os.path.exists(self.db_path))
         if db_exists:
             try:
@@ -731,14 +923,33 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
                 combos = get_all_combos(self.db_path)
             except Exception:
                 combos = []
+            try:
+                key_rows = get_all_api_keys(self.db_path)
+            except Exception:
+                key_rows = []
+            try:
+                model_rows = get_all_registered_models(self.db_path)
+            except Exception:
+                model_rows = []
 
         start_t = time.time()
         online = self.probe_gateway()
         latency_ms = int((time.time() - start_t) * 1000)
 
+        connections = [ConnectionRecord.from_row(r) for r in rows]
+        # Cada modelo do catalogo declara o id da conexao que o sincronizou; e
+        # dessa conexao que a linha herda status, validade e ultima renovacao.
+        # Sem o indice, cada modelo faria uma varredura da lista de conexoes.
+        por_id = {c.id: c for c in connections}
+
         return {
-            "connections": [ConnectionRecord.from_row(r) for r in rows],
+            "connections": connections,
             "combos": combos,
+            "keys": [VirtualKeyRecord.from_row(k) for k in key_rows],
+            "models": [
+                RegisteredModelRecord.from_row(m, por_id.get(m.get("connectionId", "")))
+                for m in model_rows
+            ],
             "cron": self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False},
             "gateway": {
                 "url": self.omniroute_url,
@@ -768,6 +979,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         if aviso:
             flash = {"message": aviso, "tone": (query.get("tom") or ["info"])[0]}
 
+        sso_config = self.config_de_sso()
         current_user, is_default, auth_from_env, refresh_margin = "admin", False, False, 900
         if self.settings:
             current_user, _ = self.settings.get_auth_credentials()
@@ -778,6 +990,8 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         content = render_dashboard(
             connections=state["connections"],
             combos=state["combos"],
+            keys=state["keys"],
+            models=state["models"],
             cron=state["cron"],
             gateway=state["gateway"],
             db_path=self.db_path,
@@ -788,6 +1002,13 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             auth_from_env=auth_from_env,
             flash=flash,
             lang=self.resolve_language(),
+            sso_config=sso_config,
+            # Booleano, e nunca o valor: um GET de configuracao que devolvesse
+            # o segredo seria o mesmo que publica-lo no HTML da pagina.
+            sso_tem_segredo=sso.tem_client_secret(self.arquivo_do_segredo_sso()),
+            sso_segredo_do_ambiente=sso.segredo_vem_do_ambiente(),
+            sso_desligado_pelo_ambiente=sso.desligado_pelo_ambiente(),
+            sso_endereco_de_retorno=sso.redirect_uri(sso_config) if sso_config.get("base_url") else "",
         ).encode("utf-8")
 
         self.send_response(HTTPStatus.OK)
@@ -881,6 +1102,10 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if route == "/acoes/sso":
+            self.handle_sso_config(raw_body)
+            return
+
         if route == "/acoes/credenciais":
             fields = parse_qs(raw_body.decode("utf-8", errors="replace"))
             new_user = (fields.get("user", [""])[0] or "").strip()
@@ -912,6 +1137,74 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Acao nao encontrada")
+
+    def handle_sso_config(self, raw_body: bytes) -> None:
+        """Grava a configuracao de SSO.
+
+        Chega aqui ja com sessao e ja com a guarda de mesma origem. Exige AINDA
+        a senha local atual, e o motivo e especifico: quem sequestra uma sessao
+        de oito horas poderia apontar o painel para um provedor hostil e se
+        colocar na lista de autorizados -- persistencia permanente, que
+        sobrevive a troca da senha do painel.
+        """
+        lang = self.resolve_language()
+        campos = parse_qs(raw_body.decode("utf-8", errors="replace"))
+
+        def campo(nome: str) -> str:
+            return (campos.get(nome, [""])[0] or "").strip()
+
+        if not self.confere_senha_local(campo("senha_local")):
+            get_logger().warning("SSO: tentativa de alterar a configuracao com senha incorreta")
+            self.redirect_to_dashboard("danger", translate("sso.wrong_password", lang))
+            return
+
+        desejado = campo("enabled")
+        if desejado == "saml":
+            self.redirect_to_dashboard("danger", translate("sso.saml_refused", lang))
+            return
+
+        novo = {
+            "enabled": desejado if desejado == "oidc" else "",
+            "base_url": campo("base_url").rstrip("/"),
+            "oidc_issuer": campo("oidc_issuer").rstrip("/"),
+            "oidc_client_id": campo("oidc_client_id"),
+            "oidc_scopes": campo("oidc_scopes") or sso.ESCOPOS_PADRAO,
+            "allowed_domains": campo("allowed_domains"),
+            "allowed_emails": campo("allowed_emails"),
+        }
+
+        arquivo = self.arquivo_do_segredo_sso()
+        segredo_novo = campos.get("oidc_client_secret", [""])[0] or ""
+        if segredo_novo.strip() and not sso.segredo_vem_do_ambiente():
+            # Campo em branco MANTEM o segredo anterior: apagar por descuido a
+            # credencial do cliente derrubaria o SSO sem ninguem entender por que.
+            if not sso.grava_client_secret(arquivo, segredo_novo.strip()):
+                self.redirect_to_dashboard("danger", translate("sso.save_failed", lang))
+                return
+
+        if novo["enabled"] == "oidc":
+            if not all(novo[c] for c in ("base_url", "oidc_issuer", "oidc_client_id")):
+                self.redirect_to_dashboard("danger", translate("sso.incomplete", lang))
+                return
+            if sso.allowlist_esta_vazia(novo):
+                # Recusado aqui E de novo no callback. As duas guardas sao de
+                # proposito: allowlist vazia significa "toda conta do provedor
+                # entra", e isso nao pode depender de uma so verificacao.
+                self.redirect_to_dashboard("danger", translate("sso.allowlist_required", lang))
+                return
+            if not sso.tem_client_secret(arquivo):
+                self.redirect_to_dashboard("danger", translate("sso.no_secret", lang))
+                return
+
+        if not sso.grava_config(self.prefs_path(), novo):
+            self.redirect_to_dashboard("danger", translate("sso.save_failed", lang))
+            return
+
+        # A configuracao mudou: o documento de descoberta memorizado pode ser de
+        # outro provedor.
+        sso.esquece_descoberta()
+        get_logger().info("SSO: configuracao atualizada (provedor: %s)", novo["enabled"] or "desligado")
+        self.redirect_to_dashboard("success", translate("sso.saved", lang))
 
 
 

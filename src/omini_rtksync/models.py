@@ -217,3 +217,167 @@ class ConnectionRecord:
 
         # OmniRoute writes "active"; 9Router writes "ok". Both mean healthy.
         return "active" if self.data.get("testStatus") in ("active", "ok") else "unknown"
+
+
+@dataclass
+class VirtualKeyRecord:
+    """Uma linha de ``api_keys`` vista pela lente do painel.
+
+    Chave virtual e o token que o cliente apresenta ao gateway no lugar da
+    credencial do provedor. Ela NAO se renova: nasce com prazo (ou sem nenhum) e
+    vence. Por isso a coluna "ultima renovacao" da tabela carrega aqui a data de
+    EMISSAO -- e o unico carimbo de tempo que a chave tem, e a coluna existe
+    para casar com a dos irmaos.
+
+    O material do token nunca chega a este objeto: ``get_all_api_keys`` sequer
+    le a coluna.
+    """
+
+    data: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "VirtualKeyRecord":
+        return cls(data=dict(row))
+
+    @property
+    def id(self) -> str:
+        return str(self.data.get("id") or "")
+
+    @property
+    def name(self) -> str:
+        """Como a chave se identifica na tela: o nome dado a ela, senao o id.
+
+        O id e um UUID -- identifica sem revelar nada. O prefixo do token seria
+        mais reconhecivel e esta fora de questao: e um pedaco do segredo.
+        """
+        return str(self.data.get("name") or self.id)
+
+    @property
+    def issued_at(self) -> Optional[str]:
+        return self.data.get("createdAt")
+
+    @property
+    def last_used_at(self) -> Optional[str]:
+        return self.data.get("lastUsedAt")
+
+    @property
+    def revoked(self) -> bool:
+        """Se o gateway ja recusa esta chave, por qualquer um dos tres motivos."""
+        return bool(
+            self.data.get("revokedAt")
+            or self.data.get("isBanned")
+            or self.data.get("isActive") is False
+        )
+
+    @property
+    def expires_at_ms(self) -> Optional[int]:
+        return parse_expiry_to_ms(self.data.get("expiresAt"))
+
+    @property
+    def remaining_seconds(self) -> Optional[int]:
+        exp = self.expires_at_ms
+        if exp is None:
+            return None
+        return int((exp - int(time.time() * 1000)) / 1000)
+
+    @property
+    def scopes(self) -> List[str]:
+        return [str(s) for s in (self.data.get("scopes") or [])]
+
+    @property
+    def allowed_models(self) -> List[str]:
+        return [str(m) for m in (self.data.get("allowedModels") or [])]
+
+    @property
+    def model_access_mode(self) -> str:
+        return str(self.data.get("modelAccessMode") or "all")
+
+    @property
+    def health_status(self) -> str:
+        """Estado da chave, nos mesmos termos que as conexoes usam.
+
+        Revogada, banida e desativada sao caminhos diferentes para o mesmo fato
+        observavel: o gateway recusa a chave. A tela diz "recusada" nos tres, e o
+        modal detalha qual foi o caminho.
+        """
+        if self.revoked:
+            return "invalid"
+        remaining = self.remaining_seconds
+        if remaining is None:
+            return "no_expiration"
+        if remaining <= 0:
+            return "expired"
+        if remaining < EXPIRING_SOON_SECONDS:
+            return "expiring_soon"
+        return "active"
+
+
+@dataclass
+class RegisteredModelRecord:
+    """Um modelo do catalogo sincronizado, com a conexao que o serve.
+
+    Modelo nao tem saude propria nem validade propria: ele responde enquanto a
+    credencial da conexao que o publica for aceita. Por isso status, validade
+    restante e ultima renovacao sao HERDADOS da conexao dona -- e o modal diz de
+    qual conexao vieram, para que ninguem leia a linha como um veredito sobre o
+    modelo em si.
+    """
+
+    data: Dict[str, Any] = field(default_factory=dict)
+    connection: Optional[ConnectionRecord] = None
+
+    @classmethod
+    def from_row(
+        cls, row: Dict[str, Any], connection: Optional[ConnectionRecord] = None
+    ) -> "RegisteredModelRecord":
+        return cls(data=dict(row), connection=connection)
+
+    @property
+    def id(self) -> str:
+        return str(self.data.get("id") or "")
+
+    @property
+    def name(self) -> str:
+        return str(self.data.get("name") or self.id)
+
+    @property
+    def provider(self) -> str:
+        return str(self.data.get("provider") or "")
+
+    @property
+    def source(self) -> str:
+        return str(self.data.get("source") or "")
+
+    @property
+    def description(self) -> str:
+        return str(self.data.get("description") or "")
+
+    @property
+    def input_token_limit(self) -> Optional[int]:
+        return self.data.get("inputTokenLimit")
+
+    @property
+    def output_token_limit(self) -> Optional[int]:
+        return self.data.get("outputTokenLimit")
+
+    @property
+    def supported_endpoints(self) -> List[str]:
+        return [str(e) for e in (self.data.get("supportedEndpoints") or [])]
+
+    @property
+    def connection_name(self) -> Optional[str]:
+        return self.connection.name if self.connection else None
+
+    @property
+    def health_status(self) -> str:
+        # Sem conexao dona identificada (catalogo orfao de uma conexao removida)
+        # nao ha o que afirmar: dizer "ativo" seria inventar a sondagem.
+        return self.connection.health_status if self.connection else "not_checked"
+
+    @property
+    def remaining_seconds(self) -> Optional[int]:
+        return self.connection.remaining_seconds if self.connection else None
+
+    @property
+    def last_refresh_at(self) -> Optional[str]:
+        return self.connection.last_refresh_at if self.connection else None

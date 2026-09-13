@@ -16,6 +16,25 @@ As quatro públicas, e por quê:
 - `/credenciais-atualizadas`  é servida no instante seguinte à troca de senha,
                  quando o navegador ainda guarda a anterior; exigir a nova ali
                  daria um 401 cru logo depois de a troca ter dado certo.
+
+E as duas da entrada federada, acrescentadas quando o SSO entrou:
+
+- `/sso/oidc/iniciar`   a ida ao provedor de identidade acontece sem sessão — é
+                 a sessão que ela existe para criar. Exigir uma aqui seria o
+                 mesmo círculo fechado do `/login`;
+- `/sso/oidc/callback`  a volta do provedor também chega sem sessão, e vem de
+                 outro site por definição. Quem prova a identidade nela não é
+                 um cookie de sessão e sim, nesta ordem: o cookie de estado
+                 assinado (com `state`, `nonce` e o verificador do PKCE), o
+                 `state` conferido com `hmac.compare_digest` e de uso único, a
+                 troca do código num canal TLS direto com o cliente
+                 autenticado, e a allowlist obrigatória. Ver
+                 `tests/test_sso_oidc.py`, que exercita cada uma dessas recusas.
+
+As duas passam pelo mesmo `protecao.registra_tentativa` do formulário — rota
+pública nova é superfície de força bruta nova — e as duas só existem quando o
+SSO está ligado e completo: sem configuração, `rota_existe` devolve False e
+elas respondem 404 como qualquer rota que este servidor não serve.
 """
 
 import pathlib
@@ -25,7 +44,10 @@ import unittest
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 SERVIDOR = RAIZ / "src" / "omini_rtksync" / "web.py"
 
-PUBLICAS = {"/healthz", "/login", "/robots.txt", "/credenciais-atualizadas"}
+PUBLICAS = {
+    "/healthz", "/login", "/robots.txt", "/credenciais-atualizadas",
+    "/sso/oidc/iniciar", "/sso/oidc/callback",
+}
 
 # Rotas citadas no despacho: `route == "/x"`, `path == "/x"`, startswith("/x")
 ROTA = re.compile(r'(?:route|path|rota_inicial)\s*==\s*"(/[a-z0-9/_-]*)"')

@@ -413,6 +413,164 @@ def update_connection_health(
         conn.close()
 
 
+# Colunas de ``api_keys`` que o painel tem permissao de ler.
+#
+# A lista existe para ser uma lista: ``SELECT *`` nesta tabela traria ``key``
+# (o segredo em claro), ``key_hash`` e ``key_prefix``. O prefixo tambem e
+# segredo -- e um pedaco do proprio token -- e por isso NAO esta aqui. Quem
+# identifica a chave na tela e o ``name``; sem nome, o ``id`` (um UUID, que nao
+# abre porta nenhuma).
+COLUNAS_SEGURAS_DE_CHAVE = (
+    "id",
+    "name",
+    "created_at",
+    "expires_at",
+    "revoked_at",
+    "last_used_at",
+    "is_active",
+    "is_banned",
+    "model_access_mode",
+    "allowed_models",
+    "allowed_combos",
+    "scopes",
+    "max_requests_per_day",
+    "max_requests_per_minute",
+)
+
+# Namespace do ``key_value`` onde o OmniRoute guarda o catalogo sincronizado.
+NAMESPACE_MODELOS = "syncedAvailableModels"
+
+
+def _tabela_existe(conn: sqlite3.Connection, nome: str) -> bool:
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (nome,)
+    )
+    return cursor.fetchone() is not None
+
+
+def _lista_json(valor: Any) -> List[Any]:
+    """Le uma coluna JSON que deveria ser um array, tolerando lixo e NULL."""
+    if isinstance(valor, list):
+        return valor
+    if not valor:
+        return []
+    try:
+        decodificado = json.loads(valor)
+    except (TypeError, ValueError):
+        return []
+    return decodificado if isinstance(decodificado, list) else []
+
+
+def get_all_api_keys(db_path: str) -> List[Dict[str, Any]]:
+    """Chaves virtuais emitidas pelo OmniRoute (tabela ``api_keys``).
+
+    Todo gateway da familia emite chave virtual -- e o token que o cliente
+    apresenta no lugar da credencial do provedor -- e o painel precisa mostrar
+    quais existem, ate quando valem e se ainda estao aceitas.
+
+    Somente leitura, e somente das colunas de COLUNAS_SEGURAS_DE_CHAVE: o
+    material do token nunca sai do banco.
+
+    Instalacao antiga sem a tabela devolve lista vazia, do mesmo jeito que
+    ``get_all_combos`` faz com ``combos``: o cartao aparece com o estado vazio
+    em vez de derrubar a pagina inteira.
+    """
+    conn = get_db_connection(db_path)
+    try:
+        if not _tabela_existe(conn, "api_keys"):
+            return []
+
+        # So pede o que a instalacao realmente tem: o schema do OmniRoute cresce
+        # entre versoes, e uma coluna ausente faria a consulta inteira falhar.
+        presentes = {linha[1] for linha in conn.execute("PRAGMA table_info(api_keys)")}
+        colunas = [c for c in COLUNAS_SEGURAS_DE_CHAVE if c in presentes]
+        if "id" not in colunas:
+            return []
+
+        resultado: List[Dict[str, Any]] = []
+        for linha in conn.execute(f"SELECT {', '.join(colunas)} FROM api_keys"):
+            item = dict(linha)
+            resultado.append({
+                "id": str(item.get("id") or ""),
+                "name": item.get("name") or "",
+                "createdAt": item.get("created_at"),
+                "expiresAt": item.get("expires_at"),
+                "revokedAt": item.get("revoked_at"),
+                "lastUsedAt": item.get("last_used_at"),
+                # Colunas ausentes viram o padrao do proprio OmniRoute: chave
+                # ativa e nao banida. Assumir o contrario pintaria de vermelho
+                # toda chave de uma instalacao antiga.
+                "isActive": bool(item["is_active"]) if item.get("is_active") is not None else True,
+                "isBanned": bool(item.get("is_banned")),
+                "modelAccessMode": item.get("model_access_mode") or "all",
+                "allowedModels": _lista_json(item.get("allowed_models")),
+                "allowedCombos": _lista_json(item.get("allowed_combos")),
+                "scopes": _lista_json(item.get("scopes")),
+                "maxRequestsPerDay": item.get("max_requests_per_day"),
+                "maxRequestsPerMinute": item.get("max_requests_per_minute"),
+            })
+        resultado.sort(key=lambda k: (k["name"] or k["id"]).lower())
+        return resultado
+    finally:
+        conn.close()
+
+
+def get_all_registered_models(db_path: str) -> List[Dict[str, Any]]:
+    """Modelos que o gateway conhece, um por linha, com a conexao que os serve.
+
+    O OmniRoute NAO tem tabela de modelos. O catalogo que ele publica em
+    ``/v1/models`` e montado em tempo de requisicao a partir de um registro
+    estatico somado ao que cada conexao sincronizou -- e essa segunda metade, a
+    unica que descreve esta instalacao, mora em ``key_value``, no namespace
+    ``syncedAvailableModels``, com a chave no formato ``<provedor>:<id da
+    conexao>`` e um array JSON por valor.
+
+    E dai que se le, e nao do ``/v1/models``: a rota HTTP exige uma chave de API
+    do proprio gateway, que o sincronizador nao tem e nao deveria passar a ter
+    so para desenhar uma tabela. O banco ja esta aberto aqui.
+    """
+    conn = get_db_connection(db_path)
+    try:
+        if not _tabela_existe(conn, "key_value"):
+            return []
+
+        resultado: List[Dict[str, Any]] = []
+        for chave, valor in conn.execute(
+            "SELECT key, value FROM key_value WHERE namespace = ?", (NAMESPACE_MODELOS,)
+        ):
+            # ``<provedor>:<id da conexao>`` -- o id e um UUID com hifens, nunca
+            # com dois-pontos, entao o primeiro separador e o unico.
+            provider, _, connection_id = str(chave).partition(":")
+            for entrada in _lista_json(valor):
+                if not isinstance(entrada, dict):
+                    continue
+                identificador = entrada.get("id")
+                if not identificador:
+                    continue
+                resultado.append({
+                    "id": str(identificador),
+                    "name": entrada.get("name") or str(identificador),
+                    "provider": provider,
+                    "connectionId": connection_id,
+                    "source": entrada.get("source") or "",
+                    "description": entrada.get("description") or "",
+                    "inputTokenLimit": entrada.get("inputTokenLimit"),
+                    "outputTokenLimit": entrada.get("outputTokenLimit"),
+                    "supportedEndpoints": [
+                        str(e) for e in _lista_json(entrada.get("supportedEndpoints"))
+                    ],
+                })
+
+        resultado.sort(key=lambda m: (m["provider"].lower(), m["id"].lower()))
+        return resultado
+    except sqlite3.Error:
+        # ``key_value`` existe mas esta em uso ou em formato inesperado: o cartao
+        # cai para o estado vazio em vez de levar o painel junto.
+        return []
+    finally:
+        conn.close()
+
+
 def get_all_combos(db_path: str) -> List[Dict[str, Any]]:
     """Carrega combos cadastrados no OmniRoute se a tabela existir."""
     conn = get_db_connection(db_path)

@@ -25,8 +25,16 @@ from typing import Optional
 
 NOME_DO_COOKIE = "ominirtksync_sessao"
 
+# Cookie de ida e volta do SSO. Guarda `state`, `nonce` e o verificador do PKCE
+# entre a saida para o provedor de identidade e o retorno dele. Nao e sessao:
+# nao da acesso a nada, e morre em dez minutos.
+NOME_DO_COOKIE_ESTADO_SSO = "ominirtksync_estado_sso"
+
 # Oito horas: um turno de trabalho. Depois disso o operador entra de novo.
 VALIDADE_EM_SEGUNDOS = 8 * 60 * 60
+
+# Dez minutos: o tempo de digitar a senha no provedor de identidade e voltar.
+VALIDADE_DO_ESTADO_SSO_EM_SEGUNDOS = 600
 
 _SEGREDO = secrets.token_bytes(32)
 
@@ -85,8 +93,84 @@ def cabecalho_para_apagar() -> str:
 
 def ler_do_cabecalho(cabecalho_cookie: str) -> str:
     """Extrai o valor do nosso cookie de um cabeçalho Cookie cru."""
+    return _valor_do_cookie(cabecalho_cookie, NOME_DO_COOKIE)
+
+
+def _valor_do_cookie(cabecalho_cookie: str, nome_procurado: str) -> str:
     for parte in (cabecalho_cookie or "").split(";"):
         nome, _, valor = parte.strip().partition("=")
-        if nome == NOME_DO_COOKIE:
+        if nome == nome_procurado:
             return valor
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Estado da ida ao provedor de identidade (SSO)
+#
+# Fica aqui, e não num módulo próprio, para que o segredo que assina continue
+# sendo UM só por processo: dois segredos seriam duas superfícies para manter
+# em dia, e a segunda é sempre a que alguém esquece de rotacionar.
+# ---------------------------------------------------------------------------
+
+
+def emitir_estado_sso(
+    state: str, nonce: str, verificador: str, agora: Optional[float] = None
+) -> str:
+    """Empacota e assina o que a volta do provedor precisa conferir."""
+    expira = int(
+        (agora if agora is not None else time.time()) + VALIDADE_DO_ESTADO_SSO_EM_SEGUNDOS
+    )
+    carga = f"{state}|{nonce}|{verificador}|{expira}"
+    codificada = base64.urlsafe_b64encode(carga.encode("utf-8")).decode("ascii")
+    return f"{codificada}.{_assina(carga)}"
+
+
+def ler_estado_sso(valor: str, agora: Optional[float] = None):
+    """Devolve (state, nonce, verificador) se íntegro e no prazo, senão None."""
+    if not valor or "." not in valor:
+        return None
+    codificada, assinatura = valor.rsplit(".", 1)
+    try:
+        carga = base64.urlsafe_b64decode(codificada.encode("ascii")).decode("utf-8")
+    except Exception:
+        return None
+    if not hmac.compare_digest(assinatura, _assina(carga)):
+        return None
+    partes = carga.split("|")
+    if len(partes) != 4:
+        return None
+    state, nonce, verificador, expira = partes
+    try:
+        if float(expira) < (agora if agora is not None else time.time()):
+            return None
+    except ValueError:
+        return None
+    if not (state and nonce and verificador):
+        return None
+    return state, nonce, verificador
+
+
+def cabecalho_para_gravar_estado_sso(valor: str) -> str:
+    """Cookie de estado do SSO.
+
+    `SameSite=Lax`, e NÃO `Strict` como o de sessão: a volta do provedor de
+    identidade é navegação vinda de outro site, e um cookie `Strict`
+    simplesmente não é enviado nela — o operador cairia de volta no formulário
+    sem nenhum erro visível, que é o pior defeito possível aqui.
+
+    `Path=/sso/` porque ele não tem o que fazer em nenhuma outra rota, e sem
+    `Secure` pelo mesmo motivo do cookie de sessão: o painel é servido em HTTP
+    no loopback.
+    """
+    return (
+        f"{NOME_DO_COOKIE_ESTADO_SSO}={valor}; Path=/sso/; HttpOnly; SameSite=Lax; "
+        f"Max-Age={VALIDADE_DO_ESTADO_SSO_EM_SEGUNDOS}"
+    )
+
+
+def cabecalho_para_apagar_estado_sso() -> str:
+    return f"{NOME_DO_COOKIE_ESTADO_SSO}=; Path=/sso/; HttpOnly; SameSite=Lax; Max-Age=0"
+
+
+def ler_estado_do_cabecalho(cabecalho_cookie: str) -> str:
+    return _valor_do_cookie(cabecalho_cookie, NOME_DO_COOKIE_ESTADO_SSO)

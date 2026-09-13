@@ -83,6 +83,15 @@ services:
       # Credencial de emergencia (usuario 'admin' + este valor como senha).
       # Se omitida, e gerada no primeiro boot e registrada no arquivo de log.
       # - DASHBOARD_RECOVERY_HASH=
+      # Entrada federada (SSO). O interruptor de emergencia SO SERVE se chegar
+      # ao container: a documentacao manda subir com SSO_DISABLED=1 quando o
+      # provedor de identidade cai, e sem esta linha a variavel ficaria no .env
+      # do host sem efeito nenhum -- que e exatamente o defeito ja corrigido
+      # aqui uma vez, logo abaixo, com CREDENTIAL_CHECK_*.
+      - SSO_DISABLED=${SSO_DISABLED:-0}
+      # Segredo do cliente OAuth. Vazio por padrao: sem valor aqui, o painel usa
+      # o arquivo .sso_client_secret (modo 0600) gravado pela tela.
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - CRON_ENABLED=${CRON_ENABLED:-1}
       # - CRON_INTERVAL=300        # herda SYNC_INTERVAL quando omitido
       # Validacao viva de credenciais: pergunta ao provedor se a chave ainda e

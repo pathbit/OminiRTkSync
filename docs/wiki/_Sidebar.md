@@ -5,6 +5,7 @@
 - [Configuration](Configuration)
 - [Dashboard](Dashboard)
 - [Authentication](Authentication)
+- [Single sign-on](SSO)
 - [Logging](Logging)
 - [Architecture](Architecture)
 - [Egress and Multi-Session](Egress-And-Multi-Session)
