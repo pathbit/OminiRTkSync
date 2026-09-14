@@ -87,3 +87,26 @@ PALETA = {
 # do cookie, entrar num painel derrubaria a sessão dos outros dois.
 NOME_DO_COOKIE = "ominirtksync_sessao"
 NOME_DO_COOKIE_DE_ESTADO = "ominirtksync_estado_sso"
+
+# As duas chaves de tradução que dependem do que ESTE gateway faz. O catálogo de
+# `i18n.py` é o mesmo texto nos três irmãos; estas duas não podiam ser, porque o
+# 9Router e o OmniRoute renovam credencial OAuth e o LiteLLM apenas inspeciona --
+# não há OAuth para renovar lá. Chamar os três de "agendador de renovação"
+# deixaria um deles mentindo na tela.
+#
+# Ficam aqui, e não no catálogo, porque este é o arquivo onde mora o que muda de
+# produto para produto. O `i18n.py` sobrepõe estas por cima das comuns.
+ROTULOS_DO_PRODUTO = {
+    "en": {
+        "cron.title": "Renewal scheduler",
+        "cron.result_line": "{inspected} evaluated · {refreshed} renewed ({duration}ms)",
+    },
+    "pt": {
+        "cron.title": "Agendador de renovação",
+        "cron.result_line": "{inspected} avaliadas · {refreshed} renovadas ({duration}ms)",
+    },
+    "es": {
+        "cron.title": "Programador de renovación",
+        "cron.result_line": "{inspected} evaluadas · {refreshed} renovadas ({duration}ms)",
+    },
+}
