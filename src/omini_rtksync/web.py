@@ -353,6 +353,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.recebe_oidc()
             return
 
+        if path == "/sso/saml/iniciar":
+            self.inicia_saml()
+            return
+
         if not self.require_auth():
             return
 
@@ -360,6 +364,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.serve_dashboard(parse_qs(urlparse(self.path).query))
         elif path == "/api/status":
             self.serve_api_status()
+        elif path == "/sso/saml/metadata":
+            # Protegida de propósito: ver serve_saml_metadata.
+            self.serve_saml_metadata()
         elif path == "/api/cron-status":
             self.serve_cron_status()
         else:
@@ -373,6 +380,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if rota_inicial == "/logout":
             self.handle_logout()
+            return
+
+        if rota_inicial == "/sso/saml/acs":
+            self.recebe_saml()
             return
 
         if not self.require_auth():
@@ -793,6 +804,83 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         protecao.limpa_apos_sucesso(protecao.endereco_do_cliente(self.client_address))
         self.pousa_sessao_federada(email)
+
+    def inicia_saml(self) -> None:
+        """AuthnRequest por HTTP-Redirect binding, com o ID guardado no servidor."""
+        if self.freio_do_sso():
+            return
+        config = self.configuracao_sso()
+        if not config.esta_ligado() or config.provedor != "saml":
+            self.recusa_sso()
+            return
+        identificador = sso.novo_id_de_requisicao()
+        # No SERVIDOR, e não em cookie: o ACS é um POST vindo de outro site, e
+        # `SameSite=Lax` não viaja em POST cross-site.
+        sso.registra_pendente(identificador)
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header(
+            "Location",
+            sso.url_de_ida_saml(config, sso.monta_authn_request(config, identificador)),
+        )
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def recebe_saml(self) -> None:
+        """ACS: recebe a asserção do provedor e valida antes de emitir sessão.
+
+        Não passa pela guarda de mesma origem, e não precisa: por definição este
+        POST vem de outro site, e a autenticidade vem da assinatura XML e do
+        `InResponseTo`, não do cabeçalho Origin.
+        """
+        if self.freio_do_sso():
+            return
+        config = self.configuracao_sso()
+        if not config.esta_ligado() or config.provedor != "saml":
+            self.recusa_sso()
+            return
+
+        # O corpo é lido AQUI, dentro do handler -- nunca no despacho, que roda
+        # antes de qualquer decisão sobre quem está do outro lado.
+        tamanho = int(self.headers.get("Content-Length") or 0)
+        corpo = self.rfile.read(tamanho) if tamanho else b""
+        campos = parse_qs(corpo.decode("utf-8", errors="replace"))
+
+        try:
+            resposta = (campos.get("SAMLResponse") or [""])[0]
+            if not resposta:
+                raise sso.FalhaDeSSO("POST no ACS sem SAMLResponse")
+            identificador = sso.in_response_to(resposta)
+            if not sso.consome_pendente(identificador):
+                raise sso.FalhaDeSSO("InResponseTo desconhecido, gasto ou fora do prazo")
+            email = sso.processa_resposta_saml(config, resposta, identificador)
+            if not sso.email_autorizado(email, config):
+                raise sso.FalhaDeSSO("e-mail fora da lista de autorizados")
+        except sso.FalhaDeSSO as erro:
+            self.anota_falha_de_sso(erro)
+            self.recusa_sso()
+            return
+
+        protecao.limpa_apos_sucesso(protecao.endereco_do_cliente(self.client_address))
+        self.pousa_sessao_federada(email)
+
+    def serve_saml_metadata(self) -> None:
+        """Descrição do serviço, servida SÓ com sessão.
+
+        Não aumenta a lista de rotas públicas: o operador baixa o arquivo
+        autenticado e o entrega ao provedor, e não há pressa nenhuma nisso.
+        """
+        try:
+            corpo = sso.metadata_do_sp(self.configuracao_sso()).encode("utf-8")
+        except sso.FalhaDeSSO:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/xml; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
 
     def sso_view(self) -> Dict[str, Any]:
         """O que a tela de configuração precisa saber. NUNCA o segredo do cliente.

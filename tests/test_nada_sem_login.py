@@ -47,6 +47,12 @@ SERVIDOR = RAIZ / "src" / "omini_rtksync" / "web.py"
 PUBLICAS = {
     "/healthz", "/login", "/robots.txt", "/credenciais-atualizadas",
     "/sso/oidc/iniciar", "/sso/oidc/callback",
+    # As duas do SAML2 sao publicas pela MESMA razao que as do OIDC: a ida
+    # acontece antes de existir sessao, e a volta (`acs`) e um POST do PROVEDOR
+    # de identidade, que nao carrega cookie nenhum deste painel. Exigir sessao
+    # nelas tornaria o SSO impossivel -- e nao seria mais seguro: quem entra por
+    # aqui ainda passa pela validacao de assinatura do proprio SAML.
+    "/sso/saml/iniciar", "/sso/saml/acs",
 }
 
 # Rotas citadas no despacho: `route == "/x"`, `path == "/x"`, startswith("/x")
@@ -85,9 +91,14 @@ class NadaRespondeSemLogin(unittest.TestCase):
         self.assertGreater(fim, inicio, "o do_POST precisa exigir sessão")
         antes = self.fonte[inicio:fim]
         servidas = set(ROTA.findall(antes))
-        # /login e /logout são os únicos POST sem sessão: um a cria, o outro a
-        # destrói, e exigir sessão para sair é prender quem quer ir embora.
-        fora = servidas - {"/login", "/logout"}
+        # /login e /logout são POST sem sessão por definição: um a cria, o outro
+        # a destrói, e exigir sessão para sair é prender quem quer ir embora.
+        # /sso/saml/acs entra pelo mesmo tipo de razão: quem posta ali é o
+        # PROVEDOR de identidade, que não tem cookie deste painel. Exigir sessão
+        # tornaria o SSO impossível -- e o que autoriza a entrada por ali não é
+        # o cookie, é a assinatura da asserção, verificada antes de qualquer
+        # sessão ser emitida.
+        fora = servidas - {"/login", "/logout", "/sso/saml/acs"}
         self.assertEqual(
             fora,
             set(),
