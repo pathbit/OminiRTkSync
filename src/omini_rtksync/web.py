@@ -1,8 +1,28 @@
-"""Servidor HTTP e dashboard web com Basic Auth e Cron Scheduler."""
+"""Painel deste sincronizador, renderizado inteiramente no servidor.
+
+Este módulo cuida do transporte — rotas, autenticação, cabeçalhos e ações. Todo
+o HTML vive em `render.py` e tudo o que sabe de QUAL gateway se trata vive em
+`gateway.py`: foi a mistura dessas três coisas num arquivo só que fez os painéis
+irmãos divergirem sem que ninguém percebesse.
+
+Mesma postura nos três, pelas mesmas razões:
+
+- nada de JavaScript buscando dado: a página chega pronta, então não existe
+  endpoint público servindo estado do gateway;
+- cabeçalhos de segurança em **toda** resposta, inclusive no corpo do 401 — que
+  é o que o navegador mostra quando se aperta ESC no diálogo do Basic Auth;
+- nenhuma credencial aparece em corpo de resposta, log ou banner;
+- POST de outra origem é recusado, porque o navegador anexa o Basic Auth
+  sozinho num formulário de terceiro;
+- rota que este servidor não serve responde 404 ANTES de qualquer exigência de
+  sessão: "você precisa entrar" e "isso não existe" são respostas diferentes
+  para perguntas diferentes.
+"""
 
 import base64
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -10,24 +30,24 @@ import time
 import urllib.error
 import urllib.request
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
-from typing import Any, Callable, Dict, Optional
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .config import Settings
+from .i18n import DEFAULT_LANGUAGE, normalize_language, translate
+from .identidade import NOME_DO_GATEWAY, NOME_DO_PRODUTO
+from .logs import get_logger
+from .prefs import get_preference, set_preference
+from . import protecao, sessao, sso
+from .render import render_dashboard, render_login_page, render_notice_page
 from .gateway import (
     get_all_api_keys,
     get_all_combos,
     get_all_connections,
     get_all_registered_models,
 )
-from .i18n import DEFAULT_LANGUAGE, normalize_language, translate
-from .identidade import NOME_DO_GATEWAY, NOME_DO_PRODUTO
 from .models import ConnectionRecord, RegisteredModelRecord, VirtualKeyRecord
-from .logs import get_logger
-from .prefs import get_preference, resolve_prefs_path, set_preference
-from . import protecao, sessao, sso
-from .render import render_dashboard, render_login_page, render_notice_page
 
 # Tempo de vida do resultado da sondagem ao gateway. O /healthz é chamado a cada
 # 15s pelo Docker; sem cache, cada chamada faria uma requisição HTTP de saída de
@@ -38,8 +58,14 @@ GATEWAY_PROBE_TTL_SECONDS = 30.0
 # resposta" — comportamento normal de health check, não falha do servidor.
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
+# Cache da sondagem ao gateway, compartilhado entre as threads do servidor.
 _gateway_probe_cache: Dict[str, tuple] = {}
 _gateway_probe_lock = threading.Lock()
+
+
+def strip_markup(text: str) -> str:
+    """Tira as etiquetas de um texto do catálogo destinado a virar aviso puro."""
+    return re.sub(r"<[^>]+>", "", text)
 
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
@@ -55,16 +81,17 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    """Rotas do painel, da autenticação à renderização, sem uma linha de HTML."""
 
-    # O cabecalho Server ia na PRIMEIRA linha de toda resposta -- inclusive no
-    # 401, antes de qualquer autenticacao -- anunciando "BaseHTTP/0.6
-    # Python/3.14.7", ou seja, a versao exata do interpretador, logo acima da
-    # CSP e do X-Frame-Options que o resto do cabecalho instala. Versao exata e
+    # O cabeçalho Server ia na PRIMEIRA linha de toda resposta -- inclusive no
+    # 401, antes de qualquer autenticação -- anunciando "BaseHTTP/0.6
+    # Python/3.14.7", ou seja, a versão exata do interpretador, logo acima da
+    # CSP e do X-Frame-Options que o resto do cabeçalho instala. Versão exata é
     # o que um scanner precisa para escolher o exploit certo.
     #
-    # version_string() tambem e sobrescrito porque o BaseHTTPRequestHandler
+    # version_string() também é sobrescrito porque o BaseHTTPRequestHandler
     # concatena server_version + " " + sys_version: com sys_version vazio, a
-    # resposta sai com um espaco sobrando no fim do valor.
+    # resposta sai com um espaço sobrando no fim do valor.
     server_version = NOME_DO_PRODUTO
     sys_version = ""
 
@@ -72,67 +99,79 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self.server_version
 
     settings: Optional[Settings] = None
-    db_path: str = ""
-    omniroute_url: str = ""
-    sync_callback: Optional[Callable[[], Dict[str, Any]]] = None
     cron_scheduler: Optional[Any] = None
-    _last_gw_check: float = 0.0
-    _last_gw_ok: bool = True
+    # Quem entrou nesta requisição. Só o nome: a senha morre na conferência, e
+    # guardar o par inteiro a deixaria ao alcance de qualquer trecho de
+    # renderização.
+    authenticated_user: str = ""
+    db_path: str = ""
+    router_url: str = ""
+    sync_callback: Optional[Callable[[], Dict[str, Any]]] = None
 
     def log_message(self, format, *args):
-        pass
+        # O log de acesso do http.server escreve em stderr sem passar pelo
+        # logger, e carrega a linha de requisição inteira. Silenciado.
+        return
+
+    # -- autenticação -------------------------------------------------------
 
     def check_auth(self) -> bool:
+        """Duas portas, e elas NÃO servem ao mesmo visitante.
+
+        O cookie é a porta do navegador, e é a única que tem tranca do lado de
+        dentro: "Sair" apaga o cookie e acabou. O Basic Auth não tem logout --
+        o navegador guarda a credencial e a reenvia sozinho até a janela
+        fechar, e não existe cabeçalho que mande ele esquecer. Enquanto a
+        navegação aceitava Basic, o botão Sair apagava o cookie e a próxima
+        visita entrava de novo pela outra porta: o botão mentia.
+
+        Por isso quem pede HTML (um navegador) precisa de SESSÃO, e só. Quem
+        não pede HTML -- curl, script, monitoramento -- continua com Basic
+        Auth, que é o esquema que essas ferramentas sabem usar sem guardar
+        estado, e para as quais "sair" não quer dizer nada.
+        """
         if not self.settings:
             return True
 
-        # Duas portas, e elas NAO servem ao mesmo visitante.
-        #
-        # O cookie e a porta do navegador, e e a unica que tem tranca do lado de
-        # dentro: "Sair" apaga o cookie e acabou. O Basic Auth nao tem logout --
-        # o navegador guarda a credencial e a reenvia sozinho ate a janela
-        # fechar, e nao existe cabecalho que mande ele esquecer. Enquanto a
-        # navegacao aceitava Basic, o botao Sair apagava o cookie e a proxima
-        # visita entrava de novo pela outra porta: o botao mentia.
-        #
-        # Por isso quem pede HTML (um navegador) precisa de SESSAO, e so. Quem
-        # nao pede HTML -- curl, script, monitoramento -- continua com Basic
-        # Auth, que e o esquema que essas ferramentas sabem usar sem guardar
-        # estado, e para as quais "sair" nao quer dizer nada.
-        if sessao.usuario_da_sessao(sessao.ler_do_cabecalho(self.headers.get("Cookie", ""))):
+        usuario = sessao.usuario_da_sessao(
+            sessao.ler_do_cabecalho(self.headers.get("Cookie", ""))
+        )
+        if usuario:
+            self.authenticated_user = usuario
             return True
 
         if "text/html" in self.headers.get("Accept", ""):
             return False
 
-        auth_header = self.headers.get("Authorization", "")
-        if not auth_header or not auth_header.startswith("Basic "):
+        cabecalho = self.headers.get("Authorization", "")
+        if not cabecalho.startswith("Basic "):
             return False
-
         try:
-            b64_val = auth_header[6:].strip()
-            decoded = base64.b64decode(b64_val).decode("utf-8")
-            if ":" not in decoded:
-                return False
-            user, pwd = decoded.split(":", 1)
-            # Delega ao Settings: credenciais salvas, padrão de fábrica e a
-            # credencial de recuperação (admin + hash) são avaliadas lá.
-            return self.settings.verify_credentials(user, pwd)
+            decodificado = base64.b64decode(cabecalho[6:].strip()).decode("utf-8")
         except Exception:
             return False
+        if ":" not in decodificado:
+            return False
+        user, password = decodificado.split(":", 1)
+        # Delega ao Settings: credenciais salvas, padrão de fábrica e a
+        # credencial de recuperação são avaliadas lá, num lugar só.
+        if not self.settings.verify_credentials(user, password):
+            return False
+        self.authenticated_user = user
+        return True
 
     def require_auth(self) -> bool:
+        """Deixa passar quem tem sessão ou Basic válido; responde o resto sozinha."""
         if self.check_auth():
             return True
 
         lang = self.resolve_language()
 
-        # Quem pediu HTML e um navegador: mandamos para o formulario, que e
-        # pagina nossa -- traduzida, com a cara do painel e com logout. O 401
-        # com WWW-Authenticate fica para quem NAO pediu HTML (curl, scripts,
-        # monitoramento), que e quem sabe responder a ele.
-        aceita = self.headers.get("Accept", "")
-        if "text/html" in aceita and urlparse(self.path).path != "/login":
+        # Quem pediu HTML é um navegador: mandamos para o formulário, que é
+        # página nossa -- traduzida, com a cara do painel e com logout. O 401
+        # com WWW-Authenticate fica para quem NÃO pediu HTML (curl, scripts,
+        # monitoramento), que é quem sabe responder a ele.
+        if "text/html" in self.headers.get("Accept", "") and urlparse(self.path).path != "/login":
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", "/login")
             self.send_header("Cache-Control", "no-store")
@@ -140,39 +179,70 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return False
 
-        payload = render_notice_page(
+        corpo = render_notice_page(
             translate("auth.required", lang), translate("auth.required_body", lang)
         )
         self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", f'Basic realm="{NOME_DO_PRODUTO} Dashboard"')
+        self.send_header("WWW-Authenticate", f'Basic realm="{NOME_DO_PRODUTO}"')
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Length", str(len(corpo)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.write_body(payload)
+        self.write_body(corpo)
         return False
 
-    # Politica de seguranca aplicada a TODAS as respostas, nao so a pagina
-    # principal: o 401, o aviso de credenciais trocadas e os redirects tambem
-    # sao HTML que o navegador renderiza.
+    def is_same_origin_request(self) -> bool:
+        """Recusa POST disparado por outro site.
+
+        O Basic Auth é anexado automaticamente pelo navegador mesmo num POST
+        vindo de outra origem, e um formulário urlencoded não dispara preflight.
+        Sem esta checagem, uma página maliciosa aberta na mesma máquina poderia
+        trocar a senha do painel.
+
+        A ordem importa: o Origin é a evidência forte e é avaliado primeiro.
+        Checar Sec-Fetch-Site antes disso fazia um valor inesperado do navegador
+        recusar a requisição mesmo com o Origin batendo com o Host. Não se usa
+        Referer porque a própria página é servida com Referrer-Policy: no-referrer.
+        """
+        host = self.headers.get("Host", "")
+        origin = self.headers.get("Origin", "")
+
+        if origin and origin != "null":
+            # Comparação pelo host declarado: mesma origem, requisição legítima.
+            # Origin presente e divergente é a única prova positiva de ataque.
+            return urlparse(origin).netloc == host
+
+        fetch_site = self.headers.get("Sec-Fetch-Site", "")
+        if fetch_site:
+            # "none" é a navegação digitada na barra de endereços.
+            return fetch_site in ("same-origin", "none")
+
+        # Cliente que não é navegador (curl, script): não há sessão a sequestrar.
+        return True
+
+    # -- cabeçalhos ---------------------------------------------------------
+
+    # Política de segurança aplicada a TODAS as respostas, não só à página
+    # principal: o 401, o aviso de credenciais trocadas e os redirects também
+    # são HTML que o navegador renderiza.
     SECURITY_HEADERS = (
         ("Referrer-Policy", "no-referrer"),
         ("X-Content-Type-Options", "nosniff"),
         ("X-Frame-Options", "DENY"),
         (
             "Content-Security-Policy",
-            # Restrita ao que a pagina realmente carrega: Bootstrap e os icones
-            # vem do jsDelivr, as fontes do Google. connect-src 'self' porque o
-            # painel e inteiramente renderizado no servidor, entao um HTML
-            # injetado nao tem para onde exfiltrar.
+            # Restrita ao que a página realmente carrega: o Bootstrap e os
+            # ícones vêm do jsDelivr, as fontes do Google. connect-src 'self'
+            # porque o painel é inteiramente renderizado no servidor, então um
+            # HTML injetado não tem para onde exfiltrar.
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
             "https://fonts.googleapis.com; "
             "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
-            # As bandeiras do seletor de idioma sao SVG que o CSS do
-            # flag-icons busca no mesmo CDN. Sem esta origem elas
-            # simplesmente nao aparecem, sem erro visivel na tela.
+            # As bandeiras do seletor de idioma são SVG que o CSS do
+            # flag-icons busca no mesmo CDN. Sem esta origem elas simplesmente
+            # não aparecem, e não há erro visível na tela para denunciar a falta.
             "img-src 'self' data: https://cdn.jsdelivr.net; "
             "connect-src 'self'; "
             "form-action 'self'; "
@@ -182,67 +252,74 @@ class DashboardHandler(BaseHTTPRequestHandler):
     )
 
     def end_headers(self):
-        """Injeta os cabecalhos de seguranca antes de fechar o bloco."""
-        enviados = {k.lower() for k, _ in self._headers_buffer_names()}
+        """Injeta os cabeçalhos de segurança antes de fechar o bloco.
+
+        Aqui e não na rota: o 401 e a página de aviso também são HTML que o
+        navegador renderiza, e emiti-los só na página principal deixava
+        justamente essas duas sem proteção alguma.
+        """
+        enviados = {nome for nome, _ in self._headers_buffer_names()}
         for nome, valor in self.SECURITY_HEADERS:
             if nome.lower() not in enviados:
                 self.send_header(nome, valor)
         super().end_headers()
 
     def _headers_buffer_names(self):
-        """Nomes ja enfileirados nesta resposta, para nao duplicar cabecalho."""
+        """Nomes já enfileirados nesta resposta, para não duplicar cabeçalho."""
         for linha in getattr(self, "_headers_buffer", []) or []:
             try:
                 texto = linha.decode("latin-1", "ignore")
             except Exception:
                 continue
             if ":" in texto:
-                yield texto.split(":", 1)[0].strip(), texto
+                yield texto.split(":", 1)[0].strip().lower(), texto
 
+    # -- rotas --------------------------------------------------------------
 
-    # Rotas que este servidor conhece. Serve para uma so decisao, tomada ANTES
-    # de exigir sessao: o que nao esta aqui e 404, e nao um convite a fazer
-    # login para depois descobrir que a pagina nunca existiu.
+    # Rotas que este servidor conhece. Serve para uma só decisão, tomada ANTES
+    # de exigir sessão: o que não está aqui é 404, e não um convite a fazer
+    # login para depois descobrir que a página nunca existiu.
     #
-    # Rota REAL e protegida continua mandando para /login -- e a diferenca entre
-    # "voce precisa entrar" e "isso nao existe", que sao respostas diferentes
-    # para perguntas diferentes.
+    # Rota REAL e protegida continua mandando para /login -- é a diferença entre
+    # "você precisa entrar" e "isso não existe".
     ROTAS_CONHECIDAS = {
         "/", "/index.html", "/healthz", "/login", "/logout", "/robots.txt",
         "/favicon.ico", "/credenciais-atualizadas", "/logs",
     }
-    PREFIXOS_CONHECIDOS = ("/api/", "/acoes/", "/sso/")
+    PREFIXOS_CONHECIDOS = ("/api/", "/acoes/")
 
     def rota_existe(self, caminho: str) -> bool:
-        # SEM CONFIGURACAO, NADA MUDA: as rotas de SSO nao existem enquanto o
-        # SSO nao estiver ligado e completo. Nao e um 403 nem uma pagina
-        # dizendo "configure primeiro" -- e 404, pelo mesmo caminho de qualquer
-        # rota que este servidor nao serve. Um painel que nunca ligou SSO nao
-        # tem nem superficie nova para alguem sondar.
-        if caminho.startswith("/sso/"):
-            return bool(self.provedor_de_sso())
-        return caminho in self.ROTAS_CONHECIDAS or caminho.startswith(self.PREFIXOS_CONHECIDOS)
+        if caminho in self.ROTAS_CONHECIDAS or caminho.startswith(self.PREFIXOS_CONHECIDOS):
+            return True
+        # SEM CONFIGURAÇÃO, NADA MUDA: as rotas do acesso federado só existem
+        # quando há provedor configurado E ligado. Desligado, elas devolvem 404
+        # pelo mesmo caminho de qualquer outra rota que nunca existiu -- um
+        # painel que nunca ligou SSO não tem nem superfície nova para sondar.
+        return caminho.startswith("/sso/") and self.sso_esta_ligado()
 
     def recusa_rota_desconhecida(self, caminho: str) -> bool:
-        """Devolve True e responde 404 quando a rota nao existe neste servidor."""
+        """Devolve True e responde 404 quando a rota não existe neste servidor."""
         if self.rota_existe(caminho):
             return False
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
         return True
 
     def do_GET(self):
-        if self.recusa_rota_desconhecida(urlparse(self.path).path):
+        # Uma leitura de configuração por requisição: a conexão pode ser
+        # reaproveitada, e uma configuração salva no pedido anterior tem de
+        # valer no seguinte.
+        self._configuracao_sso = None
+        path = urlparse(self.path).path
+        if self.recusa_rota_desconhecida(path):
             return
-        if self.path == "/healthz":
+        if path == "/healthz":
             self.serve_healthz()
             return
 
-        # A pagina de login e publica por definicao: exigir sessao para exibir
-        # o formulario que cria a sessao seria um circulo fechado.
-        # Publico de proposito, e servido antes da sessao: um rastreador nao
-        # tem credencial, e a unica forma de ele ler a regra e ela nao exigir
-        # uma. O painel nao deve aparecer em indice de busca nenhum.
-        if urlparse(self.path).path == "/robots.txt":
+        # Público de propósito, e servido antes da sessão: um rastreador não tem
+        # credencial, e a única forma de ele ler a regra é ela não exigir uma. O
+        # painel não deve aparecer em índice de busca nenhum.
+        if path == "/robots.txt":
             corpo = b"User-agent: *\nDisallow: /\n"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -251,76 +328,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.write_body(corpo)
             return
 
-        if urlparse(self.path).path == "/login":
+        # A página de login é pública por definição: exigir sessão para exibir o
+        # formulário que cria a sessão seria um círculo fechado.
+        if path == "/login":
             self.serve_login_page()
             return
 
-        # As duas rotas do fluxo federado sao publicas pelo mesmo motivo do
-        # /login: a ida ao provedor de identidade e a volta dele acontecem sem
-        # sessao -- e a sessao que elas existem para criar. Ambas passam pelo
-        # mesmo teto por endereco do formulario, e ambas so existem quando o
-        # SSO esta ligado (`rota_existe`); fora disso a requisicao nem chega
-        # aqui, morre em 404.
-        if urlparse(self.path).path == "/sso/oidc/iniciar":
-            self.handle_sso_iniciar()
-            return
-
-        if urlparse(self.path).path == "/sso/oidc/callback":
-            self.handle_sso_callback()
-            return
-
-        # Servida antes de require_auth de proposito: o navegador ainda esta
-        # com a senha antiga neste instante, e exigir autenticacao aqui daria
-        # um 401 cru exatamente depois de a troca ter dado certo.
-        if urlparse(self.path).path == "/credenciais-atualizadas":
+        # Servida ANTES do require_auth de propósito: o navegador ainda está com
+        # a senha antiga neste instante, e exigir autenticação aqui daria um 401
+        # cru exatamente depois de a troca ter dado certo.
+        if path == "/credenciais-atualizadas":
             self.serve_credentials_updated()
+            return
+
+        # A ida ao provedor de identidade e a volta dele acontecem SEM sessão --
+        # é a sessão que elas existem para criar, e quem chama a volta é o
+        # provedor, que não tem cookie nosso para apresentar. Todas passam pelo
+        # MESMO teto por endereço do formulário de login, e todas só existem
+        # quando o acesso federado está ligado (ver `rota_existe`).
+        if path == "/sso/oidc/iniciar":
+            self.inicia_oidc()
+            return
+        if path == "/sso/oidc/callback":
+            self.recebe_oidc()
             return
 
         if not self.require_auth():
             return
 
-        route = urlparse(self.path)
-        if route.path in ("/", "/index.html"):
-            self.serve_dashboard(query=parse_qs(route.query))
-        elif route.path == "/api/status":
-            self.serve_status()
-        elif route.path == "/api/cron-status":
+        if path in ("/", "/index.html"):
+            self.serve_dashboard(parse_qs(urlparse(self.path).query))
+        elif path == "/api/status":
+            self.serve_api_status()
+        elif path == "/api/cron-status":
             self.serve_cron_status()
         else:
-            self.send_error(HTTPStatus.NOT_FOUND)
-
-    def is_same_origin_request(self) -> bool:
-        """Rejeita POST disparado por outro site.
-
-        O Basic Auth e anexado automaticamente pelo navegador mesmo em um POST
-        vindo de outra origem, e um formulario urlencoded nao dispara preflight.
-        Sem esta checagem, uma pagina maliciosa aberta na mesma maquina poderia
-        trocar a senha do painel.
-
-        A ordem importa: o Origin e a evidencia forte e e avaliado primeiro.
-        Checar Sec-Fetch-Site antes disso fazia um valor inesperado do navegador
-        recusar a requisicao mesmo com o Origin batendo com o Host. Nao se usa
-        Referer porque a propria pagina e servida com Referrer-Policy: no-referrer.
-        """
-        host = self.headers.get("Host", "")
-        origin = self.headers.get("Origin", "")
-
-        if origin and origin != "null":
-            # Comparacao pelo host declarado: mesma origem, requisicao legitima.
-            if urlparse(origin).netloc == host:
-                return True
-            # Origin presente e divergente e a unica prova positiva de ataque.
-            return False
-
-        fetch_site = self.headers.get("Sec-Fetch-Site", "")
-        if fetch_site:
-            # "none" e a navegacao digitada na barra de enderecos.
-            return fetch_site in ("same-origin", "none")
-
-        # Cliente que nao e navegador (curl, script): nao ha sessao a sequestrar.
-        return True
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_POST(self):
+        self._configuracao_sso = None
         rota_inicial = urlparse(self.path).path
         if rota_inicial == "/login":
             self.handle_login()
@@ -333,102 +379,366 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if not self.is_same_origin_request():
-            # Devolve o usuario para o painel explicando o motivo, em vez de uma
-            # pagina de erro crua sem caminho de volta.
+            # Redireciona com aviso em vez de devolver um 403 cru: o operador
+            # precisa entender o que houve, e um 403 na tela depois de tentar
+            # trocar a senha parece um defeito do painel.
             self.redirect_to_dashboard(
                 "danger", translate("security.cross_origin", self.resolve_language())
             )
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        raw_body = self.rfile.read(length) if length > 0 else b"{}"
+        tamanho = int(self.headers.get("Content-Length") or 0)
+        corpo = self.rfile.read(tamanho) if tamanho else b""
+        campos = parse_qs(corpo.decode("utf-8", errors="replace"))
 
         route = urlparse(self.path).path
-
-        # Acoes do dashboard: executam e redirecionam de volta para a pagina
-        # renderizada (POST-Redirect-GET), sem JSON no navegador.
+        # Ações do painel: executam e redirecionam de volta para a página
+        # renderizada (POST-Redirect-GET), sem JSON no navegador. O aviso viaja
+        # na querystring e o jQuery do `render.py` o apaga da barra de endereços
+        # assim que a página desenha -- senão o F5 traria de volta a mensagem de
+        # algo que já aconteceu.
         if route.startswith("/acoes/"):
-            self.handle_dashboard_action(route, raw_body)
+            self.handle_dashboard_action(route, campos)
             return
-
         if route == "/api/sync":
-            self.handle_sync()
+            self.handle_sync_request()
         elif route == "/api/test-gateway":
             self.handle_test_gateway()
         elif route == "/api/change-password":
-            self.handle_change_password(raw_body)
+            self.handle_change_password(corpo)
         elif route == "/api/cron-run":
-            self.handle_cron_run()
+            self.handle_api_cron_run()
         else:
-            self.send_error(HTTPStatus.NOT_FOUND)
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
-    def probe_gateway(self) -> bool:
-        """Sonda o gateway com cache: o resultado vale por GATEWAY_PROBE_TTL_SECONDS."""
-        if not self.omniroute_url:
-            return True
+    # -- respostas ----------------------------------------------------------
 
-        now = time.time()
-        with _gateway_probe_lock:
-            cached_at, cached_ok = _gateway_probe_cache.get(self.omniroute_url, (0.0, None))
-            if cached_ok is not None and (now - cached_at) < GATEWAY_PROBE_TTL_SECONDS:
-                return cached_ok
-
-        try:
-            req = urllib.request.Request(
-                self.omniroute_url,
-                headers={"User-Agent": f"{NOME_DO_PRODUTO}-Healthcheck/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
-                gateway_ok = resp.status < 500
-        except urllib.error.HTTPError as e:
-            gateway_ok = e.code < 500
-        except Exception:
-            gateway_ok = False
-
-        with _gateway_probe_lock:
-            _gateway_probe_cache[self.omniroute_url] = (time.time(), gateway_ok)
-        return gateway_ok
-
-    def write_body(self, payload: bytes) -> None:
+    def write_body(self, corpo: bytes) -> None:
         """Escreve o corpo tolerando o cliente ter fechado a conexão antes da leitura."""
         try:
-            self.wfile.write(payload)
+            self.wfile.write(corpo)
         except CLIENT_DISCONNECT_ERRORS:
+            # O navegador fechou antes de ler. Não é erro do servidor, e deixar
+            # subir enchia o log de traceback a cada recarga cancelada.
             self.close_connection = True
 
-    # -----------------------------------------------------------------------
-    # Entrada federada (SSO). Ver src/omini_rtksync/sso.py.
-    # -----------------------------------------------------------------------
+    def respond_html(self, corpo: bytes, status: HTTPStatus = HTTPStatus.OK) -> None:
+        """Resposta HTML completa: Content-Length montado antes de qualquer escrita."""
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
 
-    def arquivo_do_segredo_sso(self) -> str:
-        """O segredo do cliente OAuth mora ao lado da credencial de recuperacao."""
-        base = os.path.dirname(self.settings.get_auth_file_path()) if self.settings else ""
-        return sso.caminho_do_segredo(base or os.path.expanduser("~"))
+    def respond_json(self, corpo: bytes) -> None:
+        """Resposta JSON. Nunca é cacheável: o que ela carrega é estado vivo."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
 
-    def config_de_sso(self) -> Dict[str, str]:
-        return sso.ler_config(self.prefs_path())
+    def redirect_to_dashboard(self, tone: str, message: str) -> None:
+        """Volta para a página com uma mensagem de resultado (POST-Redirect-GET)."""
+        query = urlencode({"aviso": message, "tom": tone})
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", f"/?{query}")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
-    def provedor_de_sso(self, config: Optional[Dict[str, str]] = None) -> str:
-        """Qual provedor responde agora. Vazio significa desligado."""
-        try:
-            config = self.config_de_sso() if config is None else config
-            return sso.provedor_ativo(config, self.arquivo_do_segredo_sso())
-        except Exception:
-            # Banco ilegivel, diretorio sumido: SSO desligado e o painel segue
-            # servindo o formulario local, que e o que nao pode faltar.
-            return ""
+    def responde_429(self, espere_segundos: int) -> None:
+        """Pedidos demais: 429 com Retry-After, que é o que um cliente correto lê."""
+        lang = self.resolve_language()
+        corpo = render_notice_page(
+            translate("auth.too_many", lang),
+            translate("auth.too_many_body", lang, seconds=espere_segundos),
+        )
+        self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+        self.send_header("Retry-After", str(espere_segundos))
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
 
-    def handle_sso_iniciar(self) -> None:
-        """Manda o navegador ao provedor de identidade, guardando o estado."""
+    def serve_credentials_updated(self) -> None:
+        """Confirma a troca de senha sem exigir a credencial que acabou de mudar."""
+        lang = self.resolve_language()
+        self.respond_html(
+            render_notice_page(
+                translate("auth.updated_title", lang),
+                translate("auth.updated_body", lang),
+                translate("auth.updated_link", lang),
+            )
+        )
+
+    def serve_cron_status(self) -> None:
+        """Estado do agendador. O histórico só traz contagens e ações, nunca credencial."""
+        cron = self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False}
+        self.respond_json(json.dumps(cron, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    def serve_healthz(self) -> None:
+        """Health check do Docker: barato, sem cache do navegador e sem exceção no log.
+
+        A sondagem ao gateway passa por probe_gateway, que memoriza o resultado;
+        sem isso cada probe pagava até 3s de HTTP de saída e estourava o timeout
+        do healthcheck, que fechava o socket e gerava BrokenPipeError.
+        """
+        db_ok = bool(self.db_path and os.path.exists(self.db_path))
+        gateway_ok = self.probe_gateway()
+
+        if db_ok and gateway_ok:
+            status, corpo = HTTPStatus.OK, b"OK"
+        elif not db_ok:
+            status, corpo = HTTPStatus.SERVICE_UNAVAILABLE, b"DATABASE_NOT_READY"
+        else:
+            status, corpo = HTTPStatus.SERVICE_UNAVAILABLE, b"GATEWAY_SERVICE_UNREACHABLE"
+
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
+
+    # -- entrada ------------------------------------------------------------
+
+    def pagina_de_login(self, lang: str, erro: str = "", com_desafio: bool = True) -> bytes:
+        """Monta o formulário de entrada com o desafio que o endereço merece.
+
+        O desafio só entra depois de algumas falhas: quem acerta de primeira
+        nunca o vê, e quem insiste passa a pagar CPU por tentativa.
+
+        `com_desafio=False` é a recusa do acesso federado, e o motivo é o
+        oposto: lá a página tem de sair IDÊNTICA para toda falha, e um desafio
+        sorteado a cada recusa mudaria o corpo -- que é exatamente o sinal que
+        conta ao atacante em que ponto do fluxo ele parou.
+        """
         endereco = protecao.endereco_do_cliente(self.client_address)
+        desafio, dificuldade = "", protecao.DIFICULDADE
+        if com_desafio and protecao.precisa_de_desafio(endereco):
+            desafio = protecao.novo_desafio()
+            dificuldade = protecao.dificuldade_para(endereco)
+        return render_login_page(lang, erro, desafio, dificuldade, self.nome_do_provedor_sso())
+
+    def serve_login_page(self, erro: str = "") -> None:
+        """Formulário de entrada: a porta do navegador para o painel."""
+        self.respond_html(self.pagina_de_login(self.resolve_language(), erro))
+
+    def handle_login(self) -> None:
+        """Valida a credencial do formulário e emite o cookie de sessão."""
+        endereco = protecao.endereco_do_cliente(self.client_address)
+
+        # Teto por janela: o que para o script que tenta mil senhas por minuto.
         pode, espere = protecao.registra_tentativa(endereco)
         if not pode:
             self.responde_429(espere)
             return
 
-        config = self.config_de_sso()
-        if self.provedor_de_sso(config) != "oidc":
-            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+        tamanho = int(self.headers.get("Content-Length", 0))
+        corpo = self.rfile.read(tamanho) if tamanho > 0 else b""
+        campos = parse_qs(corpo.decode("utf-8", "replace"))
+        usuario = (campos.get("usuario") or [""])[0]
+        senha = (campos.get("senha") or [""])[0]
+
+        # Depois de algumas falhas, o formulário só é aceito com a prova de
+        # trabalho resolvida. Custa CPU para quem tenta em massa e é instantânea
+        # de conferir aqui.
+        if protecao.precisa_de_desafio(endereco):
+            desafio = (campos.get("desafio") or [""])[0]
+            resposta = (campos.get("resposta") or [""])[0]
+            if not protecao.resposta_confere(
+                desafio, resposta, protecao.dificuldade_para(endereco)
+            ):
+                protecao.anota_falha(endereco)
+                self.serve_login_page(translate("auth.login_failed", self.resolve_language()))
+                return
+
+        # A espera cresce a cada falha seguida. É do lado do servidor: não há
+        # nada no cliente para desligar.
+        atraso = protecao.espera_por_falhas(endereco)
+        if atraso:
+            time.sleep(atraso)
+
+        if not self.settings or not self.settings.verify_credentials(usuario, senha):
+            # Mensagem única para usuário errado e senha errada: distinguir os
+            # dois conta a quem tenta qual metade já acertou.
+            protecao.anota_falha(endereco)
+            self.serve_login_page(translate("auth.login_failed", self.resolve_language()))
+            return
+
+        protecao.limpa_apos_sucesso(endereco)
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(usuario)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def handle_logout(self) -> None:
+        """Apaga o cookie. O Basic Auth não tem equivalente disso."""
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/login")
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar())
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    # -- acesso federado ----------------------------------------------------
+    #
+    # As rotas públicas a mais, e todas passam pelo MESMO teto por endereço do
+    # formulário de login: a ida ao provedor e a volta dele acontecem sem
+    # sessão -- é a sessão que elas existem para criar.
+
+    def freio_do_sso(self) -> bool:
+        """Aplica o teto por endereço. Devolve True quando já respondeu 429."""
+        endereco = protecao.endereco_do_cliente(self.client_address)
+        pode, espere = protecao.registra_tentativa(endereco)
+        if not pode:
+            self.responde_429(espere)
+            return True
+        return False
+
+    def anota_falha_de_sso(self, motivo: Any) -> None:
+        """O motivo vai para o log interno; a tela recebe a mensagem genérica.
+
+        Nada do que passa por aqui carrega credencial: nem o `code`, nem os
+        tokens, nem o segredo do cliente. O que se registra é o passo que falhou.
+        """
+        get_logger().warning("[SSO] fluxo recusado: %s", motivo)
+
+    def recusa_sso(self) -> None:
+        """Mensagem ÚNICA para toda falha do fluxo federado.
+
+        Distinguir "state trocado" de "e-mail fora da lista" conta ao atacante
+        em que ponto do fluxo ele parou. O formulário local vem junto: quem tem
+        senha entra mesmo com o provedor recusando.
+
+        O cookie de estado é de uso único: recusada a volta, ele sai junto, para
+        que uma segunda tentativa com o mesmo `state` não encontre nada com que
+        comparar.
+        """
+        lang = self.resolve_language()
+        corpo = self.pagina_de_login(lang, translate("sso.failed", lang), com_desafio=False)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
+
+    def pousa_sessao_federada(self, email: str) -> None:
+        """Emite o MESMO cookie assinado do formulário e aterrissa em "/".
+
+        NÃO é um 302: no Chrome, uma cadeia de redirecionamento iniciada em
+        outro site não carrega o cookie `SameSite=Strict` no salto seguinte, e o
+        operador cairia em `/login` com uma sessão válida no bolso.
+
+        O destino é SEMPRE "/". Nenhum parâmetro de retorno vira destino, aqui
+        ou em qualquer lugar: isso seria redirecionamento aberto autenticado.
+        """
+        lang = self.resolve_language()
+        corpo = self.pagina_de_pouso(lang)
+        # O prefixo "sso:" distingue no rodapé e no log quem entrou pela porta
+        # federada, sem inventar uma segunda forma de sessão: o cookie é o mesmo.
+        get_logger().info("[SSO] sessão emitida para uma identidade federada")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header(
+            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir("sso:" + email))
+        )
+        # O cookie de ida já cumpriu o papel: uso único.
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
+
+    def confere_senha_local(self, senha: str) -> bool:
+        """Confere a senha do PAINEL, nunca a identidade federada da sessão.
+
+        Quem entrou pelo provedor de identidade não tem senha local -- e é
+        exatamente por isso que ela é exigida ao salvar a configuração: é o que
+        um cookie sequestrado não entrega. A credencial de recuperação entra
+        sempre, com provedor vivo ou morto: é ela que salva quem precisa
+        DESLIGAR o acesso federado e não lembra a senha do painel.
+        """
+        if not self.settings or not senha:
+            return False
+        usuario = self.authenticated_user or getattr(self.settings, "dashboard_user", "admin")
+        if self.settings.verify_credentials(usuario, senha):
+            return True
+        return self.settings.verify_credentials("admin", senha)
+
+    def configuracao_sso(self) -> Dict[str, str]:
+        """Configuração em vigor, lida uma vez por requisição.
+
+        A leitura é barata mas não é de graça, e o mesmo pedido a consulta na
+        autenticação, na tela e no despacho: memorizada por requisição.
+        """
+        guardada = getattr(self, "_configuracao_sso", None)
+        if guardada is None:
+            guardada = sso.ler_config(self.prefs_path()) if self.settings else {}
+            self._configuracao_sso = guardada
+        return guardada
+
+    def sso_esta_ligado(self) -> bool:
+        """Há provedor configurado E completo? É o que decide se as rotas existem."""
+        return bool(self.provedor_de_sso())
+
+    def sso_base_dir(self) -> str:
+        """Diretório do segredo do cliente: o mesmo das credenciais locais.
+
+        Nunca $HOME por atalho -- o segredo tem de cair no volume de dados, ou
+        ele some quando o container é recriado e o SSO se desliga sozinho.
+        """
+        if not self.settings:
+            return ""
+        return sso.caminho_do_segredo(os.path.dirname(self.settings.get_auth_file_path()))
+
+    def provedor_de_sso(self) -> str:
+        """Qual provedor responde agora. Vazio significa desligado."""
+        try:
+            return sso.provedor_ativo(self.configuracao_sso(), self.sso_base_dir())
+        except Exception:
+            # Banco ilegível, diretório sumido: acesso federado desligado e o
+            # painel segue servindo o formulário local, que é o que não pode faltar.
+            return ""
+
+    def nome_do_provedor_sso(self) -> str:
+        """Nome exibido no botão da tela de login. Vazio quando não há botão.
+
+        A descoberta é consultada aqui de propósito: se o provedor de identidade
+        não responde, o botão SOME em vez de levar a uma falha genérica. O
+        formulário local nunca sai da tela.
+        """
+        config = self.configuracao_sso()
+        if self.provedor_de_sso() != "oidc":
+            return ""
+        try:
+            sso.descobre(config["oidc_issuer"])
+        except Exception:
+            return ""
+        return sso.nome_do_provedor(config)
+
+    def pagina_de_pouso(self, lang: str) -> bytes:
+        """A tela intermediária que carrega o cookie recém-emitido."""
+        return render_notice_page(
+            translate("sso.signing_in", lang),
+            translate("sso.signing_in_body", lang),
+            refresh_url="/",
+        )
+
+    def inicia_oidc(self) -> None:
+        """Sorteia o estado, grava o cookie de ida e manda o navegador ao provedor."""
+        if self.freio_do_sso():
+            return
+        config = self.configuracao_sso()
+        if self.provedor_de_sso() != "oidc":
+            self.recusa_sso()
             return
 
         try:
@@ -438,11 +748,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             verificador, desafio = sso.novo_desafio_pkce()
             destino = sso.url_de_autorizacao(config, documento, state, nonce, desafio)
         except Exception as erro:
-            get_logger().warning(
-                "SSO: nao foi possivel iniciar a ida ao provedor: %s",
-                getattr(erro, "detalhe", type(erro).__name__),
-            )
-            self.serve_login_page(translate("sso.failed", self.resolve_language()))
+            # Descoberta quebrada não trava o login local: a tela volta com o
+            # formulário de sempre.
+            self.anota_falha_de_sso(getattr(erro, "detalhe", type(erro).__name__))
+            self.recusa_sso()
             return
 
         self.send_response(HTTPStatus.FOUND)
@@ -457,715 +766,79 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def handle_sso_callback(self) -> None:
-        """Valida a volta do provedor e emite o MESMO cookie do formulario."""
-        endereco = protecao.endereco_do_cliente(self.client_address)
-        pode, espere = protecao.registra_tentativa(endereco)
-        if not pode:
-            self.responde_429(espere)
+    def recebe_oidc(self) -> None:
+        """Volta do provedor. Valida TUDO antes de emitir sessão."""
+        if self.freio_do_sso():
             return
-
-        lang = self.resolve_language()
-        config = self.config_de_sso()
-        if self.provedor_de_sso(config) != "oidc":
-            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+        config = self.configuracao_sso()
+        if self.provedor_de_sso() != "oidc":
+            self.recusa_sso()
             return
 
         consulta = parse_qs(urlparse(self.path).query)
         try:
             email = sso.conclui_callback(
                 config,
-                self.arquivo_do_segredo_sso(),
+                self.sso_base_dir(),
                 state_da_query=(consulta.get("state") or [""])[0],
                 codigo=(consulta.get("code") or [""])[0],
                 erro_da_query=(consulta.get("error") or [""])[0],
                 cookie_de_estado=sessao.ler_estado_do_cabecalho(self.headers.get("Cookie", "")),
             )
         except Exception as erro:
-            # UMA mensagem para todas as falhas. Dizer se parou no `state`, no
-            # prazo do token ou na lista de autorizados conta ao atacante em
-            # que ponto ele esta. O detalhe vai para o log interno -- e nele
-            # nao entra codigo, token nem segredo.
-            get_logger().warning(
-                "SSO: entrada recusada (%s)", getattr(erro, "detalhe", type(erro).__name__)
-            )
-            protecao.anota_falha(endereco)
-            self.responde_falha_de_sso(lang)
+            self.anota_falha_de_sso(getattr(erro, "detalhe", type(erro).__name__))
+            protecao.anota_falha(protecao.endereco_do_cliente(self.client_address))
+            self.recusa_sso()
             return
 
-        protecao.limpa_apos_sucesso(endereco)
-        get_logger().info("SSO: sessao emitida para %s", email)
+        protecao.limpa_apos_sucesso(protecao.endereco_do_cliente(self.client_address))
+        self.pousa_sessao_federada(email)
 
-        # 200 com meta refresh, e NUNCA 302 para "/": numa cadeia de
-        # redirecionamento iniciada por outro site o navegador nao envia o
-        # cookie de sessao `SameSite=Strict` no salto seguinte, e o operador
-        # cairia em /login com o cookie valido no bolso.
-        #
-        # O destino e SEMPRE "/": nenhum parametro da query vira destino, ou o
-        # login viraria um redirecionamento aberto ja autenticado.
-        payload = render_notice_page(
-            translate("sso.signing_in", lang),
-            translate("sso.signing_in_body", lang),
-            refresh_url="/",
-        )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        # O prefixo "sso:" distingue no log quem entrou pela porta federada,
-        # sem criar uma segunda forma de sessao: o cookie e o mesmo.
-        self.send_header(
-            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(f"sso:{email}"))
-        )
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
+    def sso_view(self) -> Dict[str, Any]:
+        """O que a tela de configuração precisa saber. NUNCA o segredo do cliente.
 
-    def responde_falha_de_sso(self, lang: str) -> None:
-        """Volta ao formulario local com a mensagem generica, e sem o estado."""
-        payload = render_login_page(lang, translate("sso.failed", lang))
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
-
-    def confere_senha_local(self, senha: str) -> bool:
-        """Confere a senha do painel, aceitando tambem a de recuperacao."""
-        if not self.settings or not senha:
-            return False
-        usuario, _ = self.settings.get_auth_credentials()
-        if self.settings.verify_credentials(usuario, senha):
-            return True
-        # A credencial de recuperacao entra sempre, provedor vivo ou morto: e
-        # ela que salva quem precisa DESLIGAR o SSO e nao lembra a senha.
-        return self.settings.verify_credentials("admin", senha)
-
-    def serve_login_page(self, erro: str = "") -> None:
-        """Formulario de entrada: a porta do navegador para o painel."""
-        lang = self.resolve_language()
-        # O desafio so entra depois de algumas falhas: quem acerta de primeira
-        # nunca o ve, e quem insiste passa a pagar CPU por tentativa.
-        endereco = protecao.endereco_do_cliente(self.client_address)
-        desafio = protecao.novo_desafio() if protecao.precisa_de_desafio(endereco) else ""
-        dificuldade = protecao.dificuldade_para(endereco)
-
-        # O botao de SSO so e desenhado quando ha configuracao completa, ligada
-        # E o provedor respondeu a descoberta. Se ele nao responde, o botao sai
-        # da tela com um aviso -- o formulario local nunca e bloqueado por isso.
-        sso_nome, sso_indisponivel = "", False
-        config = self.config_de_sso()
-        if self.provedor_de_sso(config) == "oidc":
-            try:
-                sso.descobre(config["oidc_issuer"])
-                sso_nome = sso.nome_do_provedor(config)
-            except Exception:
-                sso_indisponivel = True
-
-        payload = render_login_page(
-            lang, erro, desafio, dificuldade, sso_nome=sso_nome, sso_indisponivel=sso_indisponivel
-        )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
-
-    def handle_login(self) -> None:
-        """Valida a credencial do formulario e emite o cookie de sessao."""
-        endereco = protecao.endereco_do_cliente(self.client_address)
-
-        # Teto por janela: o que para o script que tenta mil senhas por minuto.
-        pode, espere = protecao.registra_tentativa(endereco)
-        if not pode:
-            self.responde_429(espere)
-            return
-
-        length = int(self.headers.get("Content-Length", 0))
-        corpo = self.rfile.read(length) if length > 0 else b""
-        campos = parse_qs(corpo.decode("utf-8", "replace"))
-        usuario = (campos.get("usuario") or [""])[0]
-        senha = (campos.get("senha") or [""])[0]
-
-        # Depois de algumas falhas, o formulario so e aceito com a prova de
-        # trabalho resolvida. Custa CPU para quem tenta em massa e e instantanea
-        # de conferir aqui.
-        if protecao.precisa_de_desafio(endereco):
-            desafio = (campos.get("desafio") or [""])[0]
-            resposta = (campos.get("resposta") or [""])[0]
-            if not protecao.resposta_confere(
-                desafio, resposta, protecao.dificuldade_para(endereco)
-            ):
-                protecao.anota_falha(endereco)
-                self.serve_login_page(translate("auth.login_failed", self.resolve_language()))
-                return
-
-        # A espera cresce a cada falha seguida. E do lado do servidor: nao ha
-        # nada no cliente para desligar.
-        atraso = protecao.espera_por_falhas(endereco)
-        if atraso:
-            time.sleep(atraso)
-
-        if not self.settings or not self.settings.verify_credentials(usuario, senha):
-            # Mensagem unica para usuario errado e senha errada: distinguir os
-            # dois conta a quem tenta qual metade ja acertou.
-            protecao.anota_falha(endereco)
-            self.serve_login_page(translate("auth.login_failed", self.resolve_language()))
-            return
-
-        protecao.limpa_apos_sucesso(endereco)
-        self.send_response(HTTPStatus.FOUND)
-        self.send_header("Location", "/")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(usuario)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def responde_429(self, espere_segundos: int) -> None:
-        """Pedidos demais: 429 com Retry-After, que e o que um cliente correto le."""
-        lang = self.resolve_language()
-        payload = render_notice_page(
-            translate("auth.too_many", lang),
-            translate("auth.too_many_body", lang, seconds=espere_segundos),
-        )
-        self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
-        self.send_header("Retry-After", str(espere_segundos))
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
-
-    def handle_logout(self) -> None:
-        """Apaga o cookie. O Basic Auth nao tem equivalente disso."""
-        self.send_response(HTTPStatus.FOUND)
-        self.send_header("Location", "/login")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar())
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def serve_credentials_updated(self):
-        """Confirma a troca de senha sem exigir a credencial que acabou de mudar."""
-        lang = self.resolve_language()
-        payload = render_notice_page(
-            translate("auth.updated_title", lang),
-            translate("auth.updated_body", lang),
-            translate("auth.updated_link", lang),
-        )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
-
-    def serve_healthz(self):
-        """Health check do Docker: barato, sem cache do navegador e sem exceção no log.
-
-        A sondagem ao gateway passa por probe_gateway, que memoriza o resultado;
-        sem isso cada probe pagava até 3s de HTTP de saída e estourava o timeout
-        do healthcheck, que fechava o socket e gerava BrokenPipeError.
+        Um GET de configuração jamais devolve o valor gravado: a tela recebe
+        apenas a informação de que EXISTE um segredo, e um campo para substituí-lo.
         """
-        db_ok = bool(self.db_path and os.path.exists(self.db_path))
-        gateway_ok = self.probe_gateway()
-
-        if db_ok and gateway_ok:
-            status, payload = HTTPStatus.OK, b"OK"
-        elif not db_ok:
-            status, payload = HTTPStatus.SERVICE_UNAVAILABLE, b"DATABASE_NOT_READY"
-        else:
-            status, payload = HTTPStatus.SERVICE_UNAVAILABLE, b"GATEWAY_SERVICE_UNREACHABLE"
-
-        self.send_response(status)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.write_body(payload)
-
-    def serve_status(self):
-        conns = []
-        combos = []
-        if self.db_path and os.path.exists(self.db_path):
-            try:
-                conns = get_all_connections(self.db_path)
-            except Exception:
-                conns = []
-            try:
-                combos = get_all_combos(self.db_path)
-            except Exception:
-                combos = []
-
-        cron_info = self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False}
-        is_default = self.settings.is_default_password() if self.settings else False
-        cur_user, _ = self.settings.get_auth_credentials() if self.settings else ("admin", "")
-
-        payload = {
-            "status": "online",
-            "omnirouteUrl": self.omniroute_url,
-            "dbPath": self.db_path,
-            "currentUser": cur_user,
-            "isDefaultPassword": is_default,
-            "cron": cron_info,
-            # Projeção explícita: get_all_connections devolve accessToken,
-            # refreshToken, apiKey e a linha bruta do banco. Nada disso pode
-            # sair pela API — só os campos que o painel realmente consome.
-            "connections": [
-                {
-                    "id": c.id,
-                    "provider": c.provider,
-                    "name": c.name,
-                    "isOAuth": c.is_oauth,
-                    "hasApiKey": c.has_api_key,
-                    "isLocal": c.is_local,
-                    "expiresAtMs": c.expires_at_ms,
-                    "remainingSeconds": c.remaining_seconds,
-                    "healthStatus": c.health_status,
-                }
-                for c in (ConnectionRecord.from_row(row) for row in conns)
-            ],
-            "combos": combos,
-        }
-        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.write_body(body)
-
-    def serve_cron_status(self):
-        cron_info = self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False}
-        body = json.dumps(cron_info, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.write_body(body)
-
-    def handle_test_gateway(self):
-        start_t = time.time()
-        gateway_ok = False
-        status_code = 0
-        gateway_err = ""
-        target_url = self.omniroute_url
-
-        try:
-            req = urllib.request.Request(
-                target_url,
-                headers={"User-Agent": f"{NOME_DO_PRODUTO}-Tester/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                status_code = resp.status
-                gateway_ok = status_code < 500
-        except urllib.error.HTTPError as e:
-            status_code = e.code
-            gateway_ok = e.code < 500
-        except Exception as ex:
-            gateway_err = str(ex)
-
-        latency_ms = int((time.time() - start_t) * 1000)
-
-        db_exists = bool(self.db_path and os.path.exists(self.db_path))
-        conns_count = 0
-        combos_count = 0
-        if db_exists:
-            try:
-                conns = get_all_connections(self.db_path)
-                combos = get_all_combos(self.db_path)
-                conns_count = len(conns)
-                combos_count = len(combos)
-            except Exception:
-                pass
-
-        result = {
-            "success": gateway_ok and db_exists,
-            "gatewayUrl": target_url,
-            "gatewayStatus": "online" if gateway_ok else "offline",
-            "httpStatusCode": status_code,
-            "latencyMs": latency_ms,
-            "gatewayError": gateway_err if not gateway_ok else None,
-            "dbStatus": "ok" if db_exists else "not_found",
-            "dbPath": self.db_path,
-            "connectionsCount": conns_count,
-            "combosCount": combos_count,
-            "message": f"Gateway {NOME_DO_GATEWAY} e banco storage.sqlite 100% operacionais!" if (gateway_ok and db_exists) else f"Falha ao conectar ao {NOME_DO_GATEWAY} ou banco indisponivel",
-        }
-
-        body = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.write_body(body)
-
-    def handle_change_password(self, raw_body: bytes):
-        try:
-            data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-            new_user = str(data.get("newUser") or "admin").strip()
-            new_pass = str(data.get("newPassword") or "").strip()
-
-            # Mesma política de força do formulário da tela.
-            problems = self.settings.check_password_strength(new_pass) if self.settings else []
-            if problems:
-                lang = self.resolve_language()
-                detail = " ".join(translate(key, lang) for key in problems)
-                body = json.dumps({"success": False, "error": detail}).encode("utf-8")
-                self.send_response(HTTPStatus.BAD_REQUEST)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.write_body(body)
-                return
-
-            if self.settings and getattr(self.settings, "dashboard_auth_from_env", False):
-                body = json.dumps({
-                    "success": False,
-                    "error": "Credenciais definidas por variável de ambiente (DASHBOARD_USER/DASHBOARD_PASSWORD). "
-                             "Altere-as no ambiente e reinicie o serviço.",
-                }).encode("utf-8")
-                self.send_response(HTTPStatus.CONFLICT)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.write_body(body)
-                return
-
-            if self.settings:
-                ok = self.settings.update_auth_credentials(new_user, new_pass)
-                if ok:
-                    body = json.dumps({
-                        "success": True,
-                        "message": "Credenciais atualizadas com sucesso!",
-                        "newUser": new_user,
-                    }).encode("utf-8")
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.write_body(body)
-                    return
-
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Falha ao salvar credenciais")
-        except Exception as e:
-            body = json.dumps({"success": False, "error": str(e)}).encode("utf-8")
-            self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.write_body(body)
-
-    def handle_sync(self):
-        if self.sync_callback:
-            try:
-                res = self.sync_callback()
-                body = json.dumps({"success": True, "result": res}).encode("utf-8")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.write_body(body)
-            except Exception as e:
-                body = json.dumps({"success": False, "error": str(e)}).encode("utf-8")
-                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.write_body(body)
-        else:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE)
-
-    def handle_cron_run(self):
-        if self.cron_scheduler:
-            try:
-                entry = self.cron_scheduler.trigger_now()
-                body = json.dumps({"success": True, "cycle": entry}).encode("utf-8")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.write_body(body)
-                return
-            except Exception as e:
-                err = json.dumps({"success": False, "error": str(e)}).encode("utf-8")
-                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(err)))
-                self.end_headers()
-                self.write_body(err)
-                return
-        self.handle_sync()
-
-    def prefs_path(self) -> str:
-        """Banco de preferencias proprio do sincronizador (nunca o do gateway)."""
-        base = os.path.dirname(self.settings.get_auth_file_path()) if self.settings else ""
-        return resolve_prefs_path(base or os.path.expanduser("~"))
-
-    def resolve_language(self) -> str:
-        """Idioma em vigor: preferencia salva no SQLite, senao o padrao (ingles)."""
-        return normalize_language(get_preference(self.prefs_path(), "language", DEFAULT_LANGUAGE))
-
-    def collect_dashboard_state(self) -> Dict[str, Any]:
-        """Le tudo o que a pagina precisa. Roda no servidor: o SQLite nunca sai daqui."""
-        rows: list = []
-        combos: list = []
-        key_rows: list = []
-        model_rows: list = []
-        db_exists = bool(self.db_path and os.path.exists(self.db_path))
-        if db_exists:
-            try:
-                rows = get_all_connections(self.db_path)
-            except Exception:
-                rows = []
-            try:
-                combos = get_all_combos(self.db_path)
-            except Exception:
-                combos = []
-            try:
-                key_rows = get_all_api_keys(self.db_path)
-            except Exception:
-                key_rows = []
-            try:
-                model_rows = get_all_registered_models(self.db_path)
-            except Exception:
-                model_rows = []
-
-        start_t = time.time()
-        online = self.probe_gateway()
-        latency_ms = int((time.time() - start_t) * 1000)
-
-        connections = [ConnectionRecord.from_row(r) for r in rows]
-        # Cada modelo do catalogo declara o id da conexao que o sincronizou; e
-        # dessa conexao que a linha herda status, validade e ultima renovacao.
-        # Sem o indice, cada modelo faria uma varredura da lista de conexoes.
-        por_id = {c.id: c for c in connections}
-
+        if not self.settings:
+            return {}
+        config = self.configuracao_sso()
         return {
-            "connections": connections,
-            "combos": combos,
-            "keys": [VirtualKeyRecord.from_row(k) for k in key_rows],
-            "models": [
-                RegisteredModelRecord.from_row(m, por_id.get(m.get("connectionId", "")))
-                for m in model_rows
-            ],
-            "cron": self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False},
-            "gateway": {
-                "url": self.omniroute_url,
-                "online": online,
-                "statusCode": 200 if online else 0,
-                "latencyMs": latency_ms,
-                # Bandeira explicita: o resumo e texto para humano e vinha
-                # sempre preenchido, inclusive com "Banco nao encontrado".
-                # Converter esse texto em booleano fazia a tela declarar banco e
-                # gateway 100% operacionais justamente quando o arquivo sumia.
-                "dbOk": db_exists,
-                # Numeros, e nao frase pronta: quem conhece o idioma
-                # escolhido e o render. Enquanto a frase nascia aqui, a tela em
-                # ingles exibia "Operacional (0 conexoes, 0 combos)".
-                "dbConnections": len(rows),
-                "dbCombos": len(combos),
-            },
+            "config": config,
+            "tem_segredo": sso.tem_client_secret(self.sso_base_dir()),
+            "segredo_do_ambiente": sso.segredo_vem_do_ambiente(),
+            "desligado_por_ambiente": sso.desligado_pelo_ambiente(),
+            "saml_disponivel": False,
+            "callback_url": sso.redirect_uri(config) if config.get("base_url") else "",
         }
 
-    def serve_dashboard(self, query: Optional[Dict[str, list]] = None):
-        """Renderiza a pagina inteira no servidor, com os dados ja embutidos."""
-        query = query or {}
-        state = self.collect_dashboard_state()
+    def handle_sso_settings(self, campos: Dict[str, List[str]]) -> None:
+        """Grava a configuração do acesso federado. Exige a senha local atual.
 
-        flash = None
-        aviso = (query.get("aviso") or [""])[0]
-        if aviso:
-            flash = {"message": aviso, "tone": (query.get("tom") or ["info"])[0]}
-
-        sso_config = self.config_de_sso()
-        current_user, is_default, auth_from_env, refresh_margin = "admin", False, False, 900
-        if self.settings:
-            current_user, _ = self.settings.get_auth_credentials()
-            is_default = self.settings.is_default_password()
-            auth_from_env = getattr(self.settings, "dashboard_auth_from_env", False)
-            refresh_margin = self.settings.refresh_margin
-
-        content = render_dashboard(
-            connections=state["connections"],
-            combos=state["combos"],
-            keys=state["keys"],
-            models=state["models"],
-            cron=state["cron"],
-            gateway=state["gateway"],
-            db_path=self.db_path,
-            router_url=self.omniroute_url,
-            current_user=current_user,
-            is_default_password=is_default,
-            refresh_margin=refresh_margin,
-            auth_from_env=auth_from_env,
-            flash=flash,
-            lang=self.resolve_language(),
-            sso_config=sso_config,
-            # Booleano, e nunca o valor: um GET de configuracao que devolvesse
-            # o segredo seria o mesmo que publica-lo no HTML da pagina.
-            sso_tem_segredo=sso.tem_client_secret(self.arquivo_do_segredo_sso()),
-            sso_segredo_do_ambiente=sso.segredo_vem_do_ambiente(),
-            sso_desligado_pelo_ambiente=sso.desligado_pelo_ambiente(),
-            sso_endereco_de_retorno=sso.redirect_uri(sso_config) if sso_config.get("base_url") else "",
-        ).encode("utf-8")
-
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        # A pagina carrega dados vivos: nunca pode vir do cache do navegador.
-        self.send_header("Cache-Control", "no-store, must-revalidate")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.write_body(content)
-
-    def redirect_to_dashboard(self, tone: str, message: str) -> None:
-        """Redireciona para a pagina com uma mensagem de resultado."""
-        query = urlencode({"aviso": message, "tom": tone})
-        self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", f"/?{query}")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def invalidate_caches(self) -> None:
-        """Descarta o que foi memorizado para que a próxima renderização releia tudo.
-
-        Sem isto, o resultado da sondagem ao gateway continuaria valendo por até
-        30s e o painel exibiria um estado anterior à ação recém-disparada.
-        """
-        with _gateway_probe_lock:
-            _gateway_probe_cache.clear()
-
-    def handle_dashboard_action(self, route: str, raw_body: bytes) -> None:
-        """Executa uma acao do painel e devolve o usuario para a pagina renderizada."""
-        if route == "/acoes/idioma":
-            fields = parse_qs(raw_body.decode("utf-8", errors="replace"))
-            chosen = normalize_language((fields.get("lang", [""])[0] or "").strip())
-            # Gravar pode falhar -- disco cheio, arquivo sem permissao de escrita.
-            # Redirecionar com sucesso nesse caso deixava o usuario clicando na
-            # bandeira sem entender por que a tela volta no idioma anterior: o
-            # painel dizia "pronto" e nada acontecia.
-            if not set_preference(self.prefs_path(), "language", chosen):
-                self.redirect_to_dashboard("danger", translate("language.save_failed", chosen))
-                return
-            self.send_response(HTTPStatus.SEE_OTHER)
-            self.send_header("Location", "/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-
-        if route == "/acoes/atualizar":
-            # Recarga completa: zera os caches e volta para a página, que é
-            # montada de novo no servidor a partir do banco.
-            self.invalidate_caches()
-            self.redirect_to_dashboard("info", translate("action.refreshed", self.resolve_language()))
-            return
-
-        if route == "/acoes/sincronizar":
-            if not self.sync_callback:
-                self.redirect_to_dashboard("warning", "Sincronizacao manual indisponivel nesta instancia.")
-                return
-            try:
-                res = self.sync_callback() or {}
-                self.redirect_to_dashboard(
-                    "success",
-                    f"Sincronizacao concluida: {res.get('total_connections', res.get('total', 0))} "
-                    f"conexoes inspecionadas, {res.get('refreshed', 0)} renovadas.",
-                )
-            except Exception as e:
-                self.redirect_to_dashboard("danger", f"Falha na sincronizacao: {e}")
-            return
-
-        if route == "/acoes/cron":
-            if not self.cron_scheduler:
-                self.redirect_to_dashboard("warning", "Agendador nao esta ativo nesta instancia.")
-                return
-            try:
-                entry = self.cron_scheduler.trigger_now() or {}
-                self.redirect_to_dashboard(
-                    "success",
-                    f"Ciclo executado em {entry.get('durationMs', 0)}ms: "
-                    f"{entry.get('totalInspected', 0)} avaliadas, {entry.get('refreshedCount', 0)} renovadas.",
-                )
-            except Exception as e:
-                self.redirect_to_dashboard("danger", f"Falha ao executar o ciclo: {e}")
-            return
-
-        if route == "/acoes/testar-gateway":
-            # Invalida o cache para forcar uma sondagem real nesta acao explicita.
-            with _gateway_probe_lock:
-                _gateway_probe_cache.pop(self.omniroute_url, None)
-            online = self.probe_gateway()
-            self.redirect_to_dashboard(
-                "success" if online else "danger",
-                "Gateway respondeu normalmente." if online else "Gateway nao respondeu.",
-            )
-            return
-
-        if route == "/acoes/sso":
-            self.handle_sso_config(raw_body)
-            return
-
-        if route == "/acoes/credenciais":
-            fields = parse_qs(raw_body.decode("utf-8", errors="replace"))
-            new_user = (fields.get("user", [""])[0] or "").strip()
-            new_pass = (fields.get("password", [""])[0] or "").strip()
-
-            # A política de força é obrigatória: devolve todas as regras
-            # violadas de uma vez, no idioma escolhido, em vez de recusar sem
-            # dizer o motivo.
-            problems = self.settings.check_password_strength(new_pass) if self.settings else []
-            if problems:
-                lang = self.resolve_language()
-                self.redirect_to_dashboard(
-                    "danger", " ".join(translate(key, lang) for key in problems)
-                )
-                return
-            if self.settings and getattr(self.settings, "dashboard_auth_from_env", False):
-                self.redirect_to_dashboard(
-                    "warning",
-                    "Credenciais definidas por variavel de ambiente. Altere-as no ambiente e reinicie.",
-                )
-                return
-            if self.settings and self.settings.update_auth_credentials(new_user, new_pass):
-                self.send_response(HTTPStatus.SEE_OTHER)
-                self.send_header("Location", "/credenciais-atualizadas")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            self.redirect_to_dashboard("danger", "Nao foi possivel salvar as credenciais.")
-            return
-
-        self.send_error(HTTPStatus.NOT_FOUND, "Acao nao encontrada")
-
-    def handle_sso_config(self, raw_body: bytes) -> None:
-        """Grava a configuracao de SSO.
-
-        Chega aqui ja com sessao e ja com a guarda de mesma origem. Exige AINDA
-        a senha local atual, e o motivo e especifico: quem sequestra uma sessao
-        de oito horas poderia apontar o painel para um provedor hostil e se
-        colocar na lista de autorizados -- persistencia permanente, que
-        sobrevive a troca da senha do painel.
+        Três trancas, e as três são necessárias: sessão (do `do_POST`), guarda
+        de mesma origem (idem) e a SENHA LOCAL ATUAL, pedida aqui. A terceira
+        existe porque quem sequestra uma sessão de oito horas poderia apontar o
+        painel para um provedor hostil e se pôr na lista de autorizados --
+        persistência permanente ganha com um cookie roubado.
         """
         lang = self.resolve_language()
-        campos = parse_qs(raw_body.decode("utf-8", errors="replace"))
+        if self.freio_do_sso():
+            return
 
         def campo(nome: str) -> str:
             return (campos.get(nome, [""])[0] or "").strip()
 
         if not self.confere_senha_local(campo("senha_local")):
-            get_logger().warning("SSO: tentativa de alterar a configuracao com senha incorreta")
+            protecao.anota_falha(protecao.endereco_do_cliente(self.client_address))
             self.redirect_to_dashboard("danger", translate("sso.wrong_password", lang))
             return
 
-        desejado = campo("enabled")
-        if desejado == "saml":
+        if campo("enabled") == "saml":
             self.redirect_to_dashboard("danger", translate("sso.saml_refused", lang))
             return
 
         novo = {
-            "enabled": desejado if desejado == "oidc" else "",
+            "enabled": campo("enabled") if campo("enabled") == "oidc" else "",
             "base_url": campo("base_url").rstrip("/"),
             "oidc_issuer": campo("oidc_issuer").rstrip("/"),
             "oidc_client_id": campo("oidc_client_id"),
@@ -1174,26 +847,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "allowed_emails": campo("allowed_emails"),
         }
 
-        arquivo = self.arquivo_do_segredo_sso()
-        segredo_novo = campos.get("oidc_client_secret", [""])[0] or ""
-        if segredo_novo.strip() and not sso.segredo_vem_do_ambiente():
-            # Campo em branco MANTEM o segredo anterior: apagar por descuido a
-            # credencial do cliente derrubaria o SSO sem ninguem entender por que.
-            if not sso.grava_client_secret(arquivo, segredo_novo.strip()):
+        base_dir = self.sso_base_dir()
+        novo_segredo = (campos.get("oidc_client_secret", [""])[0] or "").strip()
+        if novo_segredo and not sso.segredo_vem_do_ambiente():
+            if not sso.grava_client_secret(base_dir, novo_segredo):
                 self.redirect_to_dashboard("danger", translate("sso.save_failed", lang))
                 return
-
+        # Campo em branco MANTÉM o segredo anterior. Quem reabre a tela para
+        # corrigir a lista de permissão não digita o segredo de novo, e apagar o
+        # que funciona por causa de um campo vazio seria desligar o SSO em
+        # silêncio.
         if novo["enabled"] == "oidc":
             if not all(novo[c] for c in ("base_url", "oidc_issuer", "oidc_client_id")):
                 self.redirect_to_dashboard("danger", translate("sso.incomplete", lang))
                 return
             if sso.allowlist_esta_vazia(novo):
-                # Recusado aqui E de novo no callback. As duas guardas sao de
-                # proposito: allowlist vazia significa "toda conta do provedor
-                # entra", e isso nao pode depender de uma so verificacao.
+                # Recusado aqui E de novo no callback. As duas guardas são de
+                # propósito: allowlist vazia significa "toda conta do provedor
+                # entra", e isso não pode depender de uma só verificação.
                 self.redirect_to_dashboard("danger", translate("sso.allowlist_required", lang))
                 return
-            if not sso.tem_client_secret(arquivo):
+            if not sso.tem_client_secret(base_dir):
                 self.redirect_to_dashboard("danger", translate("sso.no_secret", lang))
                 return
 
@@ -1201,12 +875,491 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.redirect_to_dashboard("danger", translate("sso.save_failed", lang))
             return
 
-        # A configuracao mudou: o documento de descoberta memorizado pode ser de
-        # outro provedor.
+        # O emissor pode ter mudado: o documento memorizado do anterior não vale
+        # mais nada.
         sso.esquece_descoberta()
-        get_logger().info("SSO: configuracao atualizada (provedor: %s)", novo["enabled"] or "desligado")
+        self._configuracao_sso = None
+        get_logger().info("[SSO] configuração atualizada")
         self.redirect_to_dashboard("success", translate("sso.saved", lang))
 
+    # -- preferências -------------------------------------------------------
+
+    def prefs_path(self) -> str:
+        """Banco de preferências próprio do sincronizador, nunca o do gateway."""
+        return self.settings.get_prefs_path() if self.settings else ""
+
+    def resolve_language(self) -> str:
+        """Idioma em vigor: preferência salva no SQLite, senão o padrão (inglês)."""
+        return normalize_language(
+            get_preference(self.prefs_path(), "language", DEFAULT_LANGUAGE)
+        )
+
+    # -- ações --------------------------------------------------------------
+
+    def invalidate_caches(self) -> None:
+        """Descarta o que foi memorizado para que a próxima renderização releia tudo.
+
+        Sem isto, o resultado da sondagem ao gateway continuaria valendo por até
+        GATEWAY_PROBE_TTL_SECONDS e o painel exibiria um estado anterior à ação
+        que o operador acabou de disparar.
+        """
+        with _gateway_probe_lock:
+            _gateway_probe_cache.clear()
+
+    def handle_dashboard_action(self, route: str, campos: Dict[str, List[str]]) -> None:
+        """Executa uma ação do painel e devolve o operador à página renderizada."""
+        if route == "/acoes/atualizar":
+            # Só recarrega a tela: zera o que foi memorizado e volta para a
+            # página, que é montada de novo no servidor. Quem roda um ciclo é
+            # "Sync now", que aponta para /acoes/cron -- dois botões vizinhos
+            # parecendo fazer a mesma coisa faziam o operador escolher no escuro.
+            self.invalidate_caches()
+            self.redirect_to_dashboard(
+                "info", translate("action.refreshed", self.resolve_language())
+            )
+        elif route == "/acoes/cron":
+            self.handle_cron_action()
+        elif route == "/acoes/idioma":
+            self.handle_language(campos)
+        elif route == "/acoes/testar-gateway":
+            self.handle_gateway_test()
+        elif route == "/acoes/credenciais":
+            self.handle_credentials(campos)
+        elif route == "/acoes/sso":
+            self.handle_sso_settings(campos)
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def handle_language(self, campos: Dict[str, List[str]]) -> None:
+        """Grava o idioma escolhido e volta para a raiz limpa."""
+        escolhido = normalize_language((campos.get("lang", [""])[0] or "").strip())
+        # Gravar pode falhar -- disco cheio, arquivo sem permissão de escrita.
+        # Redirecionar com sucesso nesse caso deixava o operador clicando na
+        # bandeira sem entender por que a tela volta no idioma anterior: o
+        # painel dizia "pronto" e nada acontecia.
+        if not set_preference(self.prefs_path(), "language", escolhido):
+            self.redirect_to_dashboard("danger", translate("language.save_failed", escolhido))
+            return
+        # Sem aviso na volta: repetir a mensagem da ação anterior depois de
+        # trocar de idioma a mostraria no idioma antigo.
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def handle_cron_action(self) -> None:
+        """Dispara o agendador agora, registrando a execução no histórico dele.
+
+        É a ÚNICA rota que roda um ciclo sob demanda. Havia também
+        `/acoes/sincronizar`, que fazia exatamente o mesmo trabalho por fora do
+        agendador: dois botões para a mesma ação, e o ciclo disparado pelo
+        primeiro não aparecia no histórico que a tela mostra.
+        """
+        lang = self.resolve_language()
+        if not self.cron_scheduler:
+            self.redirect_to_dashboard("warning", translate("cron.unavailable", lang))
+            return
+        try:
+            entry = self.cron_scheduler.trigger_now() or {}
+        except Exception as erro:
+            self.redirect_to_dashboard("danger", translate("cron.failed", lang, error=erro))
+            return
+        # O ciclo mexe no estado do gateway: o que ficou memorizado antes dele
+        # deixaria a tela mostrando o mundo anterior ao clique.
+        self.invalidate_caches()
+        self.redirect_to_dashboard(
+            "success" if entry.get("success", True) else "warning",
+            translate(
+                "action.cron_ran",
+                lang,
+                duration=entry.get("durationMs", 0),
+                inspected=entry.get("totalInspected", 0),
+                # O nome do campo ainda muda entre os irmãos -- `findingsCount`
+                # de um lado, `refreshedCount` do outro. Unificá-lo é trabalho
+                # do `cron.py`, não daqui.
+                findings=entry.get("findingsCount", entry.get("refreshedCount", 0)),
+            ),
+        )
+
+    def handle_gateway_test(self) -> None:
+        """Sonda o gateway agora, sem esperar o que estava memorizado expirar."""
+        lang = self.resolve_language()
+        self.invalidate_caches()
+        online = self.probe_gateway()
+        self.redirect_to_dashboard(
+            "success" if online else "danger",
+            f'{translate("gateway.title", lang)}: '
+            f'{"ONLINE" if online else translate("gateway.no_response", lang)}',
+        )
+
+    def handle_credentials(self, campos: Dict[str, List[str]]) -> None:
+        """Troca usuário e senha do painel, com a política de força inteira."""
+        lang = self.resolve_language()
+        user = (campos.get("user", [""])[0] or "").strip()
+        password = (campos.get("password", [""])[0] or "").strip()
+
+        # Todas as regras violadas de uma vez: uma por tentativa faria o
+        # operador descobrir a política aos poucos.
+        problemas = self.settings.check_password_strength(password) if self.settings else []
+        if problemas:
+            self.redirect_to_dashboard(
+                "danger", " ".join(translate(chave, lang) for chave in problemas)
+            )
+            return
+        if self.settings and getattr(self.settings, "dashboard_auth_from_env", False):
+            # O mesmo texto do modal, sem a marcação: o aviso é escapado antes
+            # de ir para a tela, e as etiquetas <code> apareceriam cruas ali.
+            self.redirect_to_dashboard("warning", strip_markup(translate("auth.env_managed", lang)))
+            return
+        if self.settings and self.settings.update_auth_credentials(user, password):
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/credenciais-atualizadas")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.redirect_to_dashboard("danger", translate("auth.save_failed", lang))
+
+    # -- gateway ------------------------------------------------------------
+
+    def probe_gateway(self) -> bool:
+        """Sonda o gateway com cache: o resultado vale por GATEWAY_PROBE_TTL_SECONDS.
+
+        Quem faz a pergunta é o `gateway.py`, que sabe o endereço e o que conta
+        como "respondeu" NESTE gateway. Aqui fica só o cache -- e ele é comum
+        aos três, porque o /healthz é chamado a cada 15s pelo Docker e sem cache
+        cada chamada pagaria uma requisição de saída de até 3s, estourando o
+        timeout do probe.
+        """
+        alvo = self.gateway_url()
+        if not alvo:
+            return True
+
+        agora = time.time()
+        with _gateway_probe_lock:
+            medido_em, resultado = _gateway_probe_cache.get(alvo, (0.0, None))
+            if resultado is not None and (agora - medido_em) < GATEWAY_PROBE_TTL_SECONDS:
+                return resultado
+
+        respondeu = self.sonda_o_gateway(alvo)
+
+        with _gateway_probe_lock:
+            _gateway_probe_cache[alvo] = (time.time(), respondeu)
+        return respondeu
+
+    def gateway_url(self) -> str:
+        """Endereço do gateway que este painel acompanha."""
+        return self.router_url
+
+    def sonda_o_gateway(self, alvo: str) -> bool:
+        """Pergunta ao gateway se ele respondeu.
+
+        A pergunta em si ainda mora aqui: falta ao `gateway.py` deste irmão um
+        `sondar()` como o dos outros. Enquanto ela estiver neste arquivo, o
+        transporte continua sabendo de que gateway se trata.
+        """
+        try:
+            req = urllib.request.Request(
+                alvo, headers={"User-Agent": f"{NOME_DO_PRODUTO}-Healthcheck/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                return resp.status < 500
+        except urllib.error.HTTPError as erro:
+            return erro.code < 500
+        except Exception:
+            return False
+
+    def contagem_do_banco(self) -> Dict[str, int]:
+        """Quantas conexões e combos o banco do gateway tem agora."""
+        try:
+            return {
+                "connections": len(get_all_connections(self.db_path)),
+                "combos": len(get_all_combos(self.db_path)),
+            }
+        except Exception:
+            return {}
+
+    # -- renderização -------------------------------------------------------
+
+    def collect_dashboard_state(self) -> Dict[str, Any]:
+        """Lê tudo o que a página precisa. Roda no servidor: o SQLite nunca sai daqui."""
+        # As quatro leituras ainda saem daqui: falta ao `gateway.py` deste irmão
+        # o `carregar_painel()` que os outros já têm, e é para lá que elas vão.
+        rows, combos, key_rows, model_rows = [], [], [], []
+        db_exists = bool(self.db_path and os.path.exists(self.db_path))
+        if db_exists:
+            for destino, leitura in (
+                ("rows", get_all_connections),
+                ("combos", get_all_combos),
+                ("keys", get_all_api_keys),
+                ("models", get_all_registered_models),
+            ):
+                try:
+                    lido = leitura(self.db_path)
+                except Exception:
+                    lido = []
+                if destino == "rows":
+                    rows = lido
+                elif destino == "combos":
+                    combos = lido
+                elif destino == "keys":
+                    key_rows = lido
+                else:
+                    model_rows = lido
+
+        inicio = time.time()
+        online = self.probe_gateway()
+        latency_ms = int((time.time() - inicio) * 1000)
+
+        conns = [ConnectionRecord.from_row(r) for r in rows]
+        # Cada modelo do catálogo declara o id da conexão que o sincronizou; é
+        # dessa conexão que a linha herda status, validade e última renovação.
+        # Sem o índice, cada modelo faria uma varredura da lista de conexões.
+        por_id = {c.id: c for c in conns}
+
+        return {
+            "connections": conns,
+            "combos": combos,
+            "keys": [VirtualKeyRecord.from_row(k) for k in key_rows],
+            "models": [
+                RegisteredModelRecord.from_row(m, por_id.get(m.get("connectionId", "")))
+                for m in model_rows
+            ],
+            "modelsState": "ok",
+            "cron": self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False},
+            "gateway": {
+                "url": self.gateway_url(),
+                "online": online,
+                "statusCode": 200 if online else 0,
+                "latencyMs": latency_ms,
+                # Bandeira explícita: o resumo é texto para humano e vinha
+                # sempre preenchido, inclusive com "Banco não encontrado".
+                # Converter esse texto em booleano fazia a tela declarar banco e
+                # gateway 100% operacionais justamente quando o arquivo sumia.
+                "dbOk": db_exists,
+                # Números, e não frase pronta: quem conhece o idioma escolhido é
+                # o render. Enquanto a frase nascia aqui, a tela em inglês
+                # exibia "Operacional (0 conexões, 0 combos)".
+                "dbConnections": len(rows),
+                "dbCombos": len(combos),
+            },
+        }
+
+    def serve_dashboard(self, query: Dict[str, List[str]]) -> None:
+        """Renderiza a página inteira no servidor, com os dados já embutidos."""
+        estado = self.collect_dashboard_state()
+
+        flash = None
+        aviso = (query.get("aviso", [""])[0] or "").strip()
+        if aviso:
+            flash = {"message": aviso, "tone": (query.get("tom", ["info"])[0] or "info").strip()}
+
+        current_user, is_default, auth_from_env, refresh_margin = "admin", False, False, 900
+        if self.settings:
+            current_user = self.authenticated_user or self.settings.dashboard_user
+            is_default = self.settings.is_default_password()
+            auth_from_env = getattr(self.settings, "dashboard_auth_from_env", False)
+            refresh_margin = self.settings.refresh_margin
+
+        visao = self.sso_view()
+        conteudo = render_dashboard(
+            connections=estado["connections"],
+            combos=estado["combos"],
+            keys=estado["keys"],
+            models=estado["models"],
+            cron=estado["cron"],
+            gateway=estado["gateway"],
+            db_path=self.db_path,
+            router_url=self.gateway_url(),
+            current_user=current_user,
+            is_default_password=is_default,
+            refresh_margin=refresh_margin,
+            auth_from_env=auth_from_env,
+            flash=flash,
+            lang=self.resolve_language(),
+            sso_config=visao.get("config") or {},
+            # Booleano, e nunca o valor: um GET de configuração que devolvesse
+            # o segredo seria o mesmo que publicá-lo no HTML da página.
+            sso_tem_segredo=visao.get("tem_segredo", False),
+            sso_segredo_do_ambiente=visao.get("segredo_do_ambiente", False),
+            sso_desligado_pelo_ambiente=visao.get("desligado_por_ambiente", False),
+            sso_endereco_de_retorno=visao.get("callback_url", ""),
+        ).encode("utf-8")
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # A página carrega dados vivos: nunca pode vir do cache do navegador.
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Content-Length", str(len(conteudo)))
+        self.end_headers()
+        self.write_body(conteudo)
+
+    def serve_api_status(self) -> None:
+        """Projeção explícita: só os campos que o painel realmente consome.
+
+        `get_all_connections` devolve accessToken, refreshToken, apiKey e a
+        linha bruta do banco. Nada disso pode sair pela API.
+        """
+        conns, combos = [], []
+        if self.db_path and os.path.exists(self.db_path):
+            try:
+                conns = [ConnectionRecord.from_row(r) for r in get_all_connections(self.db_path)]
+            except Exception:
+                conns = []
+            try:
+                combos = get_all_combos(self.db_path)
+            except Exception:
+                combos = []
+
+        payload = {
+            "status": "online",
+            "gatewayUrl": self.gateway_url(),
+            "dbPath": self.db_path,
+            "currentUser": self.authenticated_user or "admin",
+            "isDefaultPassword": self.settings.is_default_password() if self.settings else False,
+            "cron": self.cron_scheduler.get_status() if self.cron_scheduler else {"active": False},
+            "connections": [
+                {
+                    "id": c.id,
+                    "provider": c.provider,
+                    "name": c.name,
+                    "isOAuth": c.is_oauth,
+                    "hasApiKey": c.has_api_key,
+                    # `getattr` porque o registro de conexao ainda nao e o mesmo
+                    # nos tres: um declara `is_local`, o outro `updated_at`, e
+                    # perder o campo seria quebrar quem le esta API la fora.
+                    "isLocal": getattr(c, "is_local", False),
+                    "expiresAtMs": c.expires_at_ms,
+                    "remainingSeconds": c.remaining_seconds,
+                    "healthStatus": c.health_status,
+                    "updatedAt": getattr(c, "updated_at", None),
+                }
+                for c in conns
+            ],
+            "combos": combos,
+        }
+        self.respond_json(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    # -- endpoints JSON -----------------------------------------------------
+    #
+    # Nenhum deles é desenhado na tela: existem para script, monitoramento e
+    # diagnóstico, que é quem sabe falar Basic Auth sem guardar estado.
+
+    def handle_sync_request(self) -> None:
+        """Dispara uma sincronização e devolve o resultado cru."""
+        if not self.sync_callback:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Synchronizer unavailable")
+            return
+        try:
+            resultado = self.sync_callback()
+        except Exception as erro:
+            self.responde_erro_json(str(erro))
+            return
+        self.invalidate_caches()
+        self.respond_json(
+            json.dumps({"success": True, "result": resultado}, ensure_ascii=False).encode("utf-8")
+        )
+
+    def handle_api_cron_run(self) -> None:
+        """Roda um ciclo do agendador. Sem agendador, cai na sincronização direta."""
+        if not self.cron_scheduler:
+            self.handle_sync_request()
+            return
+        try:
+            entry = self.cron_scheduler.trigger_now()
+        except Exception as erro:
+            self.responde_erro_json(str(erro))
+            return
+        self.invalidate_caches()
+        self.respond_json(
+            json.dumps({"success": True, "cycle": entry}, ensure_ascii=False).encode("utf-8")
+        )
+
+    def handle_test_gateway(self) -> None:
+        """Diagnóstico do gateway e do banco, em uma resposta só."""
+        inicio = time.time()
+        alvo = self.gateway_url()
+        gateway_ok = False
+        status_code = 0
+        gateway_err = ""
+
+        try:
+            req = urllib.request.Request(
+                alvo, headers={"User-Agent": f"{NOME_DO_PRODUTO}-Tester/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                status_code = resp.status
+                gateway_ok = status_code < 500
+        except urllib.error.HTTPError as erro:
+            status_code = erro.code
+            gateway_ok = erro.code < 500
+        except Exception as erro:
+            gateway_err = str(erro)
+
+        latency_ms = int((time.time() - inicio) * 1000)
+        db_exists = bool(self.db_path and os.path.exists(self.db_path))
+        contagem = self.contagem_do_banco() if db_exists else {}
+
+        resultado = {
+            "success": gateway_ok and db_exists,
+            "gatewayUrl": alvo,
+            "gatewayStatus": "online" if gateway_ok else "offline",
+            "httpStatusCode": status_code,
+            "latencyMs": latency_ms,
+            "gatewayError": gateway_err if not gateway_ok else None,
+            "dbStatus": "ok" if db_exists else "not_found",
+            "dbPath": self.db_path,
+            "connectionsCount": contagem.get("connections", 0),
+            "combosCount": contagem.get("combos", 0),
+            "message": (
+                f"{NOME_DO_GATEWAY}: OK"
+                if (gateway_ok and db_exists)
+                else f"{NOME_DO_GATEWAY}: FAIL"
+            ),
+        }
+        self.respond_json(json.dumps(resultado, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    def handle_change_password(self, corpo: bytes) -> None:
+        """Troca a credencial por JSON, com a MESMA política de força da tela."""
+        lang = self.resolve_language()
+        try:
+            dados = json.loads(corpo.decode("utf-8")) if corpo else {}
+        except Exception as erro:
+            self.responde_erro_json(str(erro))
+            return
+
+        novo_usuario = str(dados.get("newUser") or "admin").strip()
+        nova_senha = str(dados.get("newPassword") or "").strip()
+
+        problemas = self.settings.check_password_strength(nova_senha) if self.settings else []
+        if problemas:
+            detalhe = " ".join(translate(chave, lang) for chave in problemas)
+            self.responde_erro_json(detalhe, HTTPStatus.BAD_REQUEST)
+            return
+        if self.settings and getattr(self.settings, "dashboard_auth_from_env", False):
+            self.responde_erro_json(
+                strip_markup(translate("auth.env_managed", lang)), HTTPStatus.CONFLICT
+            )
+            return
+        if self.settings and self.settings.update_auth_credentials(novo_usuario, nova_senha):
+            self.respond_json(
+                json.dumps(
+                    {"success": True, "newUser": novo_usuario}, ensure_ascii=False
+                ).encode("utf-8")
+            )
+            return
+        self.responde_erro_json(translate("auth.save_failed", lang))
+
+    def responde_erro_json(
+        self, detalhe: str, status: HTTPStatus = HTTPStatus.INTERNAL_SERVER_ERROR
+    ) -> None:
+        """Erro em JSON. O detalhe nunca carrega credencial: quem o monta é quem falhou."""
+        corpo = json.dumps({"success": False, "error": detalhe}, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.write_body(corpo)
 
 
 def start_web_server(
@@ -1218,13 +1371,15 @@ def start_web_server(
     settings: Optional[Settings] = None,
     cron_scheduler: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
+    """Sobe o painel numa thread própria e devolve o servidor."""
     DashboardHandler.db_path = db_path
-    DashboardHandler.omniroute_url = omniroute_url
+    DashboardHandler.router_url = omniroute_url
     DashboardHandler.sync_callback = sync_callback
     DashboardHandler.settings = settings
     DashboardHandler.cron_scheduler = cron_scheduler
 
     server = QuietThreadingHTTPServer((host, port), DashboardHandler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     return server
+

@@ -1,9 +1,25 @@
 """Renderização server-side do dashboard.
 
 Todo o HTML é montado aqui, no servidor, com os dados já embutidos. O navegador
-nunca consulta o banco: ele recebe a página pronta. Isso mantém o SQLite
+nunca consulta o gateway: ele recebe a página pronta. Isso mantém a credencial
 inteiramente do lado do servidor e faz o painel funcionar mesmo com JavaScript
 desabilitado — o jQuery serve só para conforto.
+
+A casca é a mesma dos projetos irmãos, de propósito: cabeçalho, cartões de
+métrica, seletor de idioma, modais e rodapé são idênticos, e o que muda são os
+tokens de cor e o CONTEÚDO das tabelas de domínio.
+
+Os seis cartões existem nos três painéis, sempre, e nesta ordem: conexão com o
+gateway, agendador, conexões monitoradas, chaves virtuais, modelos cadastrados
+e combos de resiliência. Quando um gateway não tem o conceito, o cartão aparece
+com o estado vazio explicando por quê — nunca some da tela. Assimetria entre os
+três é pior que um cartão vazio: quem abre as três telas lado a lado precisa
+encontrar as mesmas peças no mesmo lugar.
+
+Todo grid pagina de dez em dez, por `paginacao.py`: o catálogo de um gateway
+chega a centenas de modelos, e despejá-los de uma vez faz a tela rolar por
+minutos. O contador do cabeçalho do cartão continua mostrando o TOTAL — a
+paginação muda o que se vê, não o que existe.
 
 Ícones: Bootstrap Icons e flag-icons (fontes/CSS de ícones), nunca emoji.
 Idioma padrão: inglês, com português e espanhol no seletor de bandeiras.
@@ -22,6 +38,7 @@ from .identidade import (
     PALETA,
     PROVEDOR_DO_GATEWAY,
 )
+from .paginacao import recortar, render_paginacao
 
 # Icone da aba, embutido como data URI: /favicon.ico responde 401 atras do
 # Basic Auth, entao um arquivo servido deixaria a aba sem icone ate o
@@ -85,18 +102,23 @@ def tokens_antes_do_login() -> str:
     valores = " ".join(f"{token}: {PALETA[token]};" for token in PAPEIS_ANTES_DO_LOGIN)
     return f"{valores} --text: {COR_DO_TEXTO};"
 
-# Teto de linhas desenhadas no cartao de modelos. Cada linha traz um modal junto,
-# e o catalogo de um gateway com muitos provedores ligados passa de meio milhar
-# de entradas: desenhar tudo levaria a pagina a quase um megabyte de HTML para
-# uma tabela que ninguem le ate o fim. O cabecalho continua contando o total.
-MAX_LINHAS_DE_MODELO = 150
 
-# Estado semântico -> (classe do badge, ícone)
+# Estado semântico -> (classe do badge, ícone). O rótulo sai de `health.<estado>`
+# na hora de desenhar, e nunca fica guardado nesta tabela: um rótulo embutido
+# aqui ficaria preso a um idioma e nunca seria traduzido.
+#
+# A tabela é a UNIÃO dos estados dos três gateways. Um estado que este gateway
+# nunca emite não custa nada e mantém a apresentação idêntica nos três; uma
+# tabela recortada por produto é como o mesmo estado passou a ser pintado de
+# cores diferentes em telas que deveriam ser a mesma.
 HEALTH_PRESENTATION = {
     "active": ("text-bg-success", "bi-check-circle-fill"),
+    "valid": ("text-bg-success", "bi-check-circle-fill"),
     "expiring_soon": ("text-bg-warning", "bi-hourglass-split"),
     "expired": ("text-bg-danger", "bi-x-octagon-fill"),
     "rate_limited": ("text-bg-warning", "bi-pause-circle-fill"),
+    "blocked": ("text-bg-secondary", "bi-slash-circle-fill"),
+    "over_budget": ("text-bg-danger", "bi-cash-stack"),
     "no_expiration": ("text-bg-secondary", "bi-infinity"),
     "unknown": ("text-bg-secondary", "bi-question-circle-fill"),
     # Estados vindos da validação viva da credencial.
@@ -149,6 +171,488 @@ def format_timestamp(value: Optional[str]) -> str:
     if len(texto) > 10 and texto[10] == "T":
         texto = texto[:10] + " " + texto[11:]
     return texto
+
+
+def format_timestamp_curto(value: Optional[str]) -> str:
+    """Data enxuta para a celula da tabela: dia/mes e hora, sem ano nem segundos.
+
+    A forma completa ("2026-09-13 18:40:52 UTC") nao cabe na coluna e era
+    cortada no meio, o que deixava a informacao pior do que util. O carimbo
+    inteiro continua no modal de detalhe, a um clique da linha.
+    """
+    if not value:
+        return "—"
+    try:
+        momento = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return format_timestamp(value)
+    return momento.strftime("%d/%m %H:%M")
+
+
+def render_notice_page(title: str, body: str, link_label: str = "",
+                       refresh_url: str = "", meta_refresh: str = "") -> bytes:
+    """Pagina autonoma para respostas fora do painel autenticado.
+
+    E o que o navegador exibe quando o usuario aperta ESC no dialogo do Basic
+    Auth, entao nao pode conter nem credencial nem dica de credencial.
+
+    O refresh instala um `<meta http-equiv="refresh">`, e existe para o pouso do
+    acesso federado: a volta do provedor NAO pode ser um 302 para "/", porque
+    numa cadeia de redirecionamento iniciada em outro site o navegador nao envia
+    o cookie `SameSite=Strict` no salto seguinte -- o operador cairia em
+    "/login" com uma sessao valida no bolso. Um 200 com refresh quebra a cadeia,
+    e a navegacao seguinte e de primeira parte.
+
+    `refresh_url` recebe o DESTINO; `meta_refresh`, o conteudo bruto do `<meta>`
+    -- a grafia que o `web.py` de um dos irmaos ainda usa. As duas convivem ate
+    `web.py` convergir, e quem passar as duas ve `refresh_url` ganhar.
+    """
+    link = (
+        f'<p><a href="/">{esc(link_label)}</a></p>' if link_label else ""
+    )
+    conteudo = f"0;url={refresh_url}" if refresh_url else meta_refresh
+    refresh = (
+        f'<meta http-equiv="refresh" content="{esc(conteudo)}">' if conteudo else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  {refresh}
+  <link rel="icon" href="{FAVICON}">
+  <title>{esc(title)}</title>
+  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
+  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
+  <style>body {{ background: {PALETA['--bg']}; }}</style>
+</head>
+<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
+  <div class="card text-center" style="max-width:34rem">
+    <div class="card-body p-4">
+      <i class="bi bi-shield-lock fs-1 text-secondary d-block mb-3" aria-hidden="true"></i>
+      <h1 class="h5 mb-3">{esc(title)}</h1>
+      <p class="text-secondary mb-3">{esc(body)}</p>
+      {link}
+    </div>
+  </div>
+</body>
+</html>""".encode("utf-8")
+
+
+def render_landing_page(lang: str = DEFAULT_LANGUAGE) -> bytes:
+    """Pouso do retorno do provedor de identidade: "Entrando..." e vai para "/".
+
+    NAO e um 302. Uma cadeia de redirecionamento iniciada em outro site nao
+    carrega o cookie `SameSite=Strict` no salto seguinte, e o operador cairia na
+    tela de login com a sessao valida no bolso -- o sintoma pareceria senha
+    errada. Esta pagina e navegacao nova, e o cookie viaja nela.
+
+    O destino e SEMPRE "/": nenhum parametro da volta vira destino, ou o login
+    federado viraria um redirecionamento aberto autenticado.
+    """
+    lang = normalize_language(lang)
+    return f"""<!DOCTYPE html>
+<html lang="{esc(lang)}" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="refresh" content="0;url=/">
+  <link rel="icon" href="{FAVICON}">
+  <title>{NOME_DO_PRODUTO}</title>
+  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
+  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
+  <style>body {{ background: {PALETA['--bg']}; }}</style>
+</head>
+<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
+  <div class="card text-center" style="max-width:30rem">
+    <div class="card-body p-4">
+      <span class="spinner-border text-secondary mb-3" role="status" aria-hidden="true"></span>
+      <h1 class="h5 mb-2">{esc(translate("sso.landing_title", lang))}</h1>
+      <p class="text-secondary mb-3">{esc(translate("sso.landing_body", lang))}</p>
+      <p class="mb-0"><a href="/">{esc(translate("auth.updated_link", lang))}</a></p>
+    </div>
+  </div>
+</body>
+</html>""".encode("utf-8")
+
+
+def render_login_page(
+    lang: str = DEFAULT_LANGUAGE,
+    erro: str = "",
+    desafio: str = "",
+    dificuldade: int = 4,
+    sso_nome: str = "",
+    sso_indisponivel: bool = False,
+    # `sso` e a grafia do irmao cujo `web.py` entrega a configuracao inteira em
+    # vez do nome ja resolvido. As duas convivem ate `web.py` convergir.
+    sso: Any = None,
+) -> bytes:
+    """Formulario de entrada, com a mesma casca e a mesma paleta do painel.
+
+    Existe porque o dialogo do Basic Auth e uma janela do NAVEGADOR: nao se
+    traduz, nao se estiliza, nao oferece logout e nao e HTML -- qualquer
+    ferramenta que dirija um navegador para no dialogo, porque nao ha nada na
+    pagina para preencher. Esta pagina resolve os quatro de uma vez.
+    """
+    lang = normalize_language(lang)
+    # O quinto argumento chega nas duas grafias, e num dos irmaos ele e
+    # posicional: objeto no lugar de texto e a configuracao, e o nome sai dela.
+    if sso_nome and not isinstance(sso_nome, str):
+        sso, sso_nome = sso_nome, ""
+    if sso is not None and not sso_nome:
+        sso_nome = sso.nome_do_provedor() if sso.esta_ligado() else ""
+    aviso = (
+        f'<div class="alert alert-danger d-flex align-items-center gap-2 mb-3" role="alert">'
+        f'<i class="bi bi-exclamation-octagon-fill" aria-hidden="true"></i>'
+        f'<span>{esc(erro)}</span></div>'
+        if erro
+        else ""
+    )
+    desafio_html = (
+        f'<input type="hidden" name="desafio" value="{esc(desafio)}">'
+        f'<input type="hidden" name="resposta" id="resposta" value="">'
+        f'<p class="text-secondary small d-flex align-items-center gap-2" id="aviso-desafio">'
+        f'<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+        f'{esc(translate("auth.challenge", lang))}</p>'
+        f'<script>'
+        f'(async () => {{'
+        f'  const desafio = {desafio!r};'
+        f'  const alvo = "0".repeat({dificuldade});'
+        f'  const cod = new TextEncoder();'
+        f'  for (let n = 0; n < 20000000; n++) {{'
+        f'    const buf = await crypto.subtle.digest("SHA-256", cod.encode(desafio + n));'
+        f'    const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");'
+        f'    if (hex.startsWith(alvo)) {{'
+        f'      document.getElementById("resposta").value = String(n);'
+        f'      document.getElementById("aviso-desafio").remove();'
+        f'      break;'
+        f'    }}'
+        f'  }}'
+        f'}})();'
+        f'</script>'
+        if desafio
+        else ""
+    )
+    # O botao do SSO e um LINK, nunca um `<form>`: a CSP do painel declara
+    # `form-action 'self'` e o navegador bloqueia, sem erro visivel na tela, a
+    # submissao que redireciona para fora. Ele fica AO LADO do formulario local,
+    # que nao sai da tela em configuracao nenhuma -- se o provedor de identidade
+    # cair, ninguem entraria.
+    botao_sso = ""
+    if sso_nome:
+        botao_sso = (
+            f'<div class="d-flex align-items-center gap-2 my-3 text-secondary small">'
+            f'<hr class="flex-grow-1 my-0"><span>{esc(translate("sso.or", lang))}</span>'
+            f'<hr class="flex-grow-1 my-0"></div>'
+            f'<a class="btn btn-outline-light w-100 d-inline-flex align-items-center '
+            f'justify-content-center gap-2" href="/sso/oidc/iniciar" rel="nofollow">'
+            f'<i class="bi bi-shield-check" aria-hidden="true"></i>'
+            f'{esc(translate("sso.sign_in_with", lang, provider=sso_nome))}</a>'
+        )
+    elif sso_indisponivel:
+        # O provedor esta configurado, mas a imagem nao tem a biblioteca dele.
+        # Dizer isso e melhor do que esconder o botao e deixar a pergunta aberta.
+        botao_sso = (
+            '<p class="text-secondary small mt-3 mb-0 d-flex align-items-start gap-2">'
+            '<i class="bi bi-plug" aria-hidden="true"></i>'
+            f'<span>{esc(translate("sso.unavailable", lang))}</span></p>'
+        )
+    return f"""<!DOCTYPE html>
+<html lang="{esc(lang)}" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="{FAVICON}">
+  <title>{NOME_DO_PRODUTO}</title>
+  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
+  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
+  <style>
+    :root {{ {tokens_antes_do_login()} }}
+    body {{ background: var(--bg); color: var(--text); font-family: {FONT_STACK}; }}
+    .card {{ background: var(--surface); border: 1px solid var(--line); }}
+    .btn-primary {{ --bs-btn-bg: var(--accent); --bs-btn-border-color: var(--accent);
+                    --bs-btn-color: var(--bg); --bs-btn-hover-bg: var(--accent);
+                    --bs-btn-hover-border-color: var(--accent); --bs-btn-hover-color: var(--bg); }}
+    .form-control {{ background: var(--bg); border-color: var(--line); color: var(--text); }}
+    .form-control:focus {{ background: var(--bg); color: var(--text);
+                           border-color: var(--accent); box-shadow: none; }}
+  </style>
+</head>
+<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
+  <main class="card" style="max-width:24rem;width:100%">
+    <div class="card-body p-4">
+      <h1 class="h5 mb-1 d-flex align-items-center gap-2">
+        <i class="bi bi-shield-lock" aria-hidden="true"></i>{NOME_DO_PRODUTO}
+      </h1>
+      <p class="text-secondary small mb-4">{esc(translate("auth.login_intro", lang))}</p>
+      {aviso}
+      <form method="post" action="/login">
+        <div class="mb-3">
+          <label class="form-label small" for="usuario">{esc(translate("auth.user", lang))}</label>
+          <input class="form-control" id="usuario" name="usuario" autocomplete="username" autofocus required>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small" for="senha">{esc(translate("auth.password", lang))}</label>
+          <input class="form-control" id="senha" name="senha" type="password"
+                 autocomplete="current-password" required>
+        </div>
+        {desafio_html}
+        <button class="btn btn-primary w-100" type="submit">
+          <i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>{esc(translate("auth.enter", lang))}
+        </button>
+      </form>
+      {botao_sso}
+    </div>
+  </main>
+</body>
+</html>""".encode("utf-8")
+
+
+def health_badge(status: str, lang: str) -> str:
+    """Monta o badge de saúde com ícone de fonte."""
+    css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])
+    label = translate(f"health.{status}", lang)
+    return (
+        f'<span class="badge {css} d-inline-flex align-items-center gap-1">'
+        f'<i class="bi {icon}" aria-hidden="true"></i>{esc(label)}</span>'
+    )
+
+
+def render_language_switcher(current: str) -> str:
+    """Seletor de idioma com bandeiras reais (flag-icons), não emoji."""
+    current = normalize_language(current)
+    _, current_flag = LANGUAGES[current]
+    items = []
+    for code, (label, flag) in LANGUAGES.items():
+        active = " active" if code == current else ""
+        items.append(
+            f'<li><button class="dropdown-item d-flex align-items-center gap-2{active}" '
+            f'type="submit" name="lang" value="{esc(code)}">'
+            f'<span class="fi {esc(flag)}"></span>{esc(label)}</button></li>'
+        )
+    return f"""
+        <form method="post" action="/acoes/idioma" class="m-0 dropdown">
+          <button class="btn btn-outline-light btn-sm dropdown-toggle d-inline-flex align-items-center gap-2"
+                  type="button" data-bs-toggle="dropdown" aria-expanded="false"
+                  aria-label="{esc(translate('language.label', current))}">
+            <span class="fi {esc(current_flag)}"></span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">{"".join(items)}
+          </ul>
+        </form>"""
+
+
+def metric_card(label: str, value: Any, icon: str, tone: str) -> str:
+    return f"""
+      <div class="col-6 col-lg-3">
+        <div class="card metric h-100">
+          <div class="card-body">
+            <div class="d-flex align-items-center gap-2 metric-label">
+              <i class="bi {icon} {tone}" aria-hidden="true"></i><span>{esc(label)}</span>
+            </div>
+            <div class="metric-value {tone}">{esc(value)}</div>
+          </div>
+        </div>
+      </div>"""
+
+
+def render_security_banner(is_default_password: bool, lang: str) -> str:
+    if not is_default_password:
+        return ""
+    return f"""
+      <div class="alert alert-warning d-flex align-items-center justify-content-between gap-3" role="alert">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi bi-shield-exclamation fs-5" aria-hidden="true"></i>
+          <div><strong>{esc(translate("security.title", lang))}</strong>
+            {translate("security.body", lang)}</div>
+        </div>
+        <button class="btn btn-warning btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
+          <i class="bi bi-key-fill me-1" aria-hidden="true"></i>{esc(translate("action.change_credentials", lang))}
+        </button>
+      </div>"""
+
+
+def render_credentials_modal(auth_from_env: bool, lang: str) -> str:
+    """Corpo do modal de troca de credenciais.
+
+    Nenhum valor vem preenchido: um usuário sugerido na tela é uma metade da
+    credencial entregue de graça a quem abrir a página.
+    """
+    if auth_from_env:
+        return f"""
+          <div class="alert alert-secondary d-flex align-items-center gap-2 mb-0" role="note">
+            <i class="bi bi-lock-fill" aria-hidden="true"></i>
+            <div>{translate("auth.env_managed", lang)}</div>
+          </div>"""
+    return f"""
+          <form method="post" action="/acoes/credenciais">
+            <div class="mb-3">
+              <label class="form-label" for="novoUsuario">{esc(translate("auth.user", lang))}</label>
+              <input class="form-control" id="novoUsuario" name="user" autocomplete="username" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="novaSenha">{esc(translate("auth.new_password", lang))}</label>
+              <input type="password" class="form-control" id="novaSenha" name="password"
+                     minlength="6" autocomplete="new-password" required
+                     pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{{6,}}"
+                     title="{esc(translate("password.policy", lang))}">
+              <div class="form-text">{esc(translate("password.policy", lang))}</div>
+            </div>
+            <button class="btn btn-primary w-100" type="submit">
+              <i class="bi bi-save me-1" aria-hidden="true"></i>{esc(translate("action.save_credentials", lang))}
+            </button>
+          </form>"""
+
+
+def render_flash(flash: Optional[Dict[str, str]]) -> str:
+    if not flash:
+        return ""
+    tone = flash.get("tone", "info")
+    icon = {
+        "success": "bi-check-circle-fill",
+        "danger": "bi-exclamation-octagon-fill",
+        "warning": "bi-exclamation-triangle-fill",
+        "info": "bi-info-circle-fill",
+    }.get(tone, "bi-info-circle-fill")
+    return f"""
+      <div class="alert alert-{esc(tone)} d-flex align-items-center gap-2" role="status" data-aviso>
+        <i class="bi {icon}" aria-hidden="true"></i>
+        <div>{esc(flash.get("message", ""))}</div>
+      </div>"""
+
+
+def estado_vazio(mensagem: str, dica: str = "") -> str:
+    """O bloco de estado vazio da familia: icone bi-inbox, uma frase e a dica.
+
+    Os quatro cartoes de tabela usam exatamente este bloco. Cada um deles existe
+    nos tres paineis por contrato; quando o gateway deste produto nao tem aquele
+    conceito, ou ainda nao tem dado nenhum, o cartao continua na tela e a frase
+    diz por que esta vazio AQUI. Assimetria de cartoes e pior que estado vazio.
+    """
+    complemento = f'\n          <div class="small mt-2">{esc(dica)}</div>' if dica else ""
+    return f"""
+        <div class="text-center text-secondary py-5">
+          <i class="bi bi-inbox fs-1 d-block mb-2" aria-hidden="true"></i>
+          {esc(mensagem)}{complemento}
+        </div>"""
+
+
+def detail_button(modal_id: str, lang: str) -> str:
+    """Botao (i) da linha, que abre o modal de detalhe daquele item."""
+    return f"""<button class="btn btn-outline-light btn-sm py-0 px-2" type="button"
+                        data-bs-toggle="modal" data-bs-target="#{esc(modal_id)}"
+                        title="{esc(translate("table.details", lang))}">
+                  <i class="bi bi-info-circle" aria-hidden="true"></i>
+                </button>"""
+
+
+def render_detail_modal(modal_id: str, titulo: str, linhas: List[tuple], lang: str,
+                        extra: str = "") -> str:
+    """Modal de detalhe no formato que a familia usa: titulo, pares e um extra.
+
+    O modal e devolvido como bloco solto para ser emitido DEPOIS da tabela: um
+    `<div>` dentro de `<tbody>` e HTML invalido, e o navegador o move sozinho
+    para fora -- o que transforma cada linha da tabela numa surpresa de layout.
+    """
+    corpo = "".join(
+        f'<dt class="col-5 text-secondary fw-normal">{esc(rotulo)}</dt>'
+        f'<dd class="col-7 text-end">{valor}</dd>'
+        for rotulo, valor in linhas
+    )
+    return f"""
+  <div class="modal fade" id="{esc(modal_id)}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
+            <i class="bi bi-info-circle" aria-hidden="true"></i>{esc(titulo)}
+          </h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"
+                  aria-label="{esc(translate("action.close", lang))}"></button>
+        </div>
+        <div class="modal-body">
+          <dl class="row mb-0 small">{corpo}</dl>
+          {extra}
+        </div>
+      </div>
+    </div>
+  </div>"""
+
+
+def cabecalho_de_dominio(rows: List[str], lang: str) -> str:
+    """A casca das tabelas de dominio: SEMPRE as mesmas sete colunas.
+
+    Conexoes, chaves virtuais e modelos sao coisas diferentes lidas do mesmo
+    jeito -- quem serve, como se chama, de que tipo e, como esta, quanto tempo
+    resta, quando foi renovado, e o (i) que abre o resto. Uma casca so mantem a
+    largura das colunas identica entre os cartoes e entre os tres paineis.
+    """
+    return f"""
+        <div class="table-responsive">
+          <table class="table table-dark table-hover align-middle mb-0 tabela-dominio">
+            <colgroup>
+              <col class="c-provedor"><col class="c-nome"><col class="c-tipo">
+              <col class="c-status"><col class="c-validade"><col class="c-renovacao">
+              <col class="c-detalhe">
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">{esc(translate("table.provider", lang))}</th>
+                <th scope="col">{esc(translate("table.name", lang))}</th>
+                <th scope="col">{esc(translate("table.type", lang))}</th>
+                <th scope="col">{esc(translate("table.status", lang))}</th>
+                <th scope="col">{esc(translate("table.remaining", lang))}</th>
+                <th scope="col">{esc(translate("table.last_refresh", lang))}</th>
+                <th scope="col" class="text-end">{esc(translate("table.details", lang))}</th>
+              </tr>
+            </thead>
+            <tbody>{"".join(rows)}
+            </tbody>
+          </table>
+        </div>"""
+
+
+def grid_paginado(nome: str, tabela: str, estado: Dict[str, Any], consulta: Any,
+                  lang: str, detalhes: str = "") -> str:
+    """Envelope de um grid: a tabela, a barra de paginas e os modais das linhas.
+
+    Todo grid do painel passa por aqui, e e o que garante as dez linhas por
+    pagina em todos eles -- um grid que nao passasse seria justamente o que
+    despejaria o catalogo inteiro na tela.
+
+    O `id` do envelope e o destino do link da barra (`#grid-<nome>`): sem ele,
+    trocar de pagina recarrega a tela no topo e o operador perde de vista a
+    tabela que estava lendo.
+
+    Os modais saem DEPOIS do envelope, e nunca de dentro da tabela: um `<div>`
+    em `<tbody>` e HTML invalido, e o navegador o move sozinho para fora.
+    """
+    return f"""
+        <div id="grid-{esc(nome)}">{tabela}{render_paginacao(estado, consulta, translate, lang)}
+        </div>""" + detalhes
+
+
+def render_remaining_seconds(remaining: Optional[int], lang: str) -> str:
+    """Validade restante de um item que nao e conexao (chave virtual, modelo).
+
+    Sem prazo declarado a chave e estatica: vale ate ser desativada, e isso e
+    "sem expiracao" de verdade -- nao o dado ausente que render_remaining trata
+    com cautela no caso do OAuth.
+    """
+    if remaining is not None:
+        return esc(format_duration(remaining, lang))
+    return f'<span class="text-secondary">{esc(translate("duration.no_expiry_short", lang))}</span>'
+
+
+def render_timestamp_cell(carimbo: Optional[str], lang: str, icone: str) -> str:
+    """Celula de carimbo de tempo curto, com o valor inteiro guardado no modal."""
+    if not carimbo:
+        return f'<span class="text-secondary">{esc(translate("table.never_refreshed", lang))}</span>'
+    return (f'<i class="bi {icone} me-1 text-secondary" aria-hidden="true"></i>'
+            f'<span class="font-monospace">{esc(format_timestamp_curto(carimbo))}</span>')
 
 
 def render_refresh_reason(conn: Any, refresh_margin: int, lang: str = DEFAULT_LANGUAGE) -> str:
@@ -237,69 +741,6 @@ def render_remaining(conn: Any, lang: str, curto: bool = False) -> str:
     return f'<span class="text-secondary">{esc(translate(chave, lang))}</span>'
 
 
-def format_timestamp_curto(value: Optional[str]) -> str:
-    """Data enxuta para a celula da tabela: dia/mes e hora, sem ano nem segundos.
-
-    A forma completa ("2026-09-13 18:40:52 UTC") nao cabe na coluna e era
-    cortada no meio, o que deixava a informacao pior do que util. O carimbo
-    inteiro continua no modal de detalhe, a um clique da linha.
-    """
-    if not value:
-        return "—"
-    try:
-        momento = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return format_timestamp(value)
-    return momento.strftime("%d/%m %H:%M")
-
-
-def render_notice_page(
-    title: str, body: str, link_label: str = "", refresh_url: str = ""
-) -> bytes:
-    """Pagina autonoma para respostas fora do painel autenticado.
-
-    E o que o navegador exibe quando o usuario aperta ESC no dialogo do Basic
-    Auth, entao nao pode conter nem credencial nem dica de credencial.
-
-    `refresh_url` instala um `<meta http-equiv="refresh">`. E o pouso do SSO:
-    responder 302 dali nao funciona, porque numa cadeia de redirecionamento
-    iniciada por outro site o Chrome nao envia o cookie de sessao
-    `SameSite=Strict` no salto seguinte -- o operador cairia em `/login` com um
-    cookie valido no bolso. Uma pagina de verdade, com refresh, quebra a cadeia:
-    o salto seguinte e navegacao de mesma origem.
-    """
-    link = (
-        f'<p><a href="/">{esc(link_label)}</a></p>' if link_label else ""
-    )
-    refresh = (
-        f'<meta http-equiv="refresh" content="0;url={esc(refresh_url)}">' if refresh_url else ""
-    )
-    return f"""<!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  {refresh}
-  <link rel="icon" href="{FAVICON}">
-  <title>{esc(title)}</title>
-  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
-  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
-  <style>body {{ background: {PALETA['--bg']}; }}</style>
-</head>
-<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
-  <div class="card text-center" style="max-width:34rem">
-    <div class="card-body p-4">
-      <i class="bi bi-shield-lock fs-1 text-secondary d-block mb-3" aria-hidden="true"></i>
-      <h1 class="h5 mb-3">{esc(title)}</h1>
-      <p class="text-secondary mb-3">{esc(body)}</p>
-      {link}
-    </div>
-  </div>
-</body>
-</html>""".encode("utf-8")
-
-
 def egress_chip(conn: Any, sharing_count: int, lang: str) -> str:
     """Marca de saída de rede da conexão, em modo somente leitura.
 
@@ -335,201 +776,540 @@ def egress_chip(conn: Any, sharing_count: int, lang: str) -> str:
     )
 
 
-def render_login_page(
-    lang: str = DEFAULT_LANGUAGE,
-    erro: str = "",
-    desafio: str = "",
-    dificuldade: int = 4,
-    sso_nome: str = "",
-    sso_indisponivel: bool = False,
-) -> bytes:
-    """Formulario de entrada, com a mesma casca e a mesma paleta do painel.
+def key_state_label(key: Any, lang: str) -> str:
+    """Por qual caminho a chave foi recusada -- ou que ela segue aceita.
 
-    Existe porque o dialogo do Basic Auth e uma janela do NAVEGADOR: nao se
-    traduz, nao se estiliza, nao oferece logout e nao e HTML -- qualquer
-    ferramenta que dirija um navegador para no dialogo, porque nao ha nada na
-    pagina para preencher. Esta pagina resolve os quatro de uma vez.
+    A celula da tabela diz "recusada" nos tres casos, porque o efeito e o mesmo.
+    Qual deles foi so cabe aqui, no modal. Um gateway que so tem uma bandeira
+    cai no ultimo caso e nunca promete os rotulos que nao guarda.
     """
-    lang = normalize_language(lang)
-    aviso = (
-        f'<div class="alert alert-danger d-flex align-items-center gap-2 mb-3" role="alert">'
-        f'<i class="bi bi-exclamation-octagon-fill" aria-hidden="true"></i>'
-        f'<span>{esc(erro)}</span></div>'
-        if erro
-        else ""
+    dados = key.data
+    if dados.get("isBanned"):
+        return translate("keys.banned", lang)
+    if dados.get("revokedAt"):
+        return translate("keys.revoked", lang)
+    if dados.get("isActive") is False:
+        return translate("keys.disabled", lang)
+    return translate("keys.enabled", lang)
+
+
+def render_key_details(key: Any, modal_id: str, lang: str) -> str:
+    """Modal com o que nao cabe na linha da chave virtual.
+
+    Escopos, modo de acesso, tetos de requisicao e o instante exato de emissao
+    sao diagnostico: espremidos na tabela empurrariam as colunas uteis para fora
+    da tela. O TOKEN nunca entra aqui -- ele sequer e lido do banco.
+    """
+    acesso = (
+        translate("keys.access_restricted", lang)
+        if key.model_access_mode == "restricted"
+        else translate("keys.access_all", lang)
     )
-    desafio_html = (
-        f'<input type="hidden" name="desafio" value="{esc(desafio)}">'
-        f'<input type="hidden" name="resposta" id="resposta" value="">'
-        f'<p class="text-secondary small d-flex align-items-center gap-2" id="aviso-desafio">'
-        f'<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
-        f'{esc(translate("auth.challenge", lang))}</p>'
-        f'<script>'
-        f'(async () => {{'
-        f'  const desafio = {desafio!r};'
-        f'  const alvo = "0".repeat({dificuldade});'
-        f'  const cod = new TextEncoder();'
-        f'  for (let n = 0; n < 20000000; n++) {{'
-        f'    const buf = await crypto.subtle.digest("SHA-256", cod.encode(desafio + n));'
-        f'    const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");'
-        f'    if (hex.startsWith(alvo)) {{'
-        f'      document.getElementById("resposta").value = String(n);'
-        f'      document.getElementById("aviso-desafio").remove();'
-        f'      break;'
-        f'    }}'
-        f'  }}'
-        f'}})();'
-        f'</script>'
-        if desafio
-        else ""
+    escopos = ", ".join(key.scopes) if key.scopes else translate("table.not_declared", lang)
+    linhas = [
+        (translate("table.status", lang), health_badge(key.health_status, lang)),
+        (translate("table.key_state", lang), esc(key_state_label(key, lang))),
+        (translate("table.remaining", lang), render_remaining_seconds(key.remaining_seconds, lang)),
+        (translate("table.issued_at", lang),
+         f'<span class="font-monospace">{esc(format_timestamp(key.issued_at))}</span>'),
+        (translate("table.last_used", lang),
+         f'<span class="font-monospace">{esc(format_timestamp(key.last_used_at))}</span>'),
+        (translate("table.model_access", lang), esc(acesso)),
+        (translate("table.scopes", lang), f'<span class="font-monospace">{esc(escopos)}</span>'),
+    ]
+    extra = ""
+    if key.allowed_models:
+        itens = "".join(f'<li class="font-monospace small">{esc(m)}</li>' for m in key.allowed_models)
+        extra = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.models", lang))}</p>'
+                 f'<ul class="mb-0">{itens}</ul>')
+    return render_detail_modal(modal_id, key.name, linhas, lang, extra)
+
+
+def render_keys_table(keys: List[Any], lang: str, consulta: Any = None) -> str:
+    """Chaves virtuais emitidas pelo gateway, uma por linha, nas sete colunas."""
+    if not keys:
+        return estado_vazio(translate("keys.empty", lang))
+
+    visiveis, estado = recortar(keys, "chaves", consulta)
+    rows = []
+    detalhes = []
+    # Id do modal pelo INDICE, nunca pelo nome: nome de chave aceita espaco,
+    # acento e barra, e nada disso vale como id de elemento HTML.
+    for indice, key in enumerate(visiveis):
+        modal_id = f"detalhe-chave-{indice}"
+        rows.append(f"""
+            <tr>
+              <td><span class="provider-chip">{esc(PROVEDOR_DO_GATEWAY)}</span></td>
+              <td class="fw-semibold">{esc(key.name)}</td>
+              <td class="text-nowrap">
+                <i class="bi bi-key me-1 text-secondary" aria-hidden="true"></i>{esc(translate("type.virtual_key", lang))}
+              </td>
+              <td>{health_badge(key.health_status, lang)}</td>
+              <td class="text-nowrap">{render_remaining_seconds(key.remaining_seconds, lang)}</td>
+              <td class="text-nowrap small">{render_timestamp_cell(key.issued_at, lang, "bi-clock")}</td>
+              <td class="text-end">{detail_button(modal_id, lang)}</td>
+            </tr>""")
+        detalhes.append(render_key_details(key, modal_id, lang))
+
+    return grid_paginado("chaves", cabecalho_de_dominio(rows, lang), estado, consulta,
+                         lang, "".join(detalhes))
+
+
+def render_model_details(model: Any, modal_id: str, lang: str) -> str:
+    """Modal com o que nao cabe na linha do modelo.
+
+    Os limites de contexto, os endpoints e a descricao sao texto longo; o nome
+    da conexao dona esta aqui porque e ele que explica de onde vem o status da
+    linha -- um modelo nao tem saude propria.
+    """
+    nao_declarado = f'<span class="text-secondary">{esc(translate("table.not_declared", lang))}</span>'
+
+    def numero(valor: Any) -> str:
+        return f'<span class="font-monospace">{esc(f"{valor:,}".replace(",", " "))}</span>' \
+            if isinstance(valor, int) else nao_declarado
+
+    linhas = [
+        (translate("table.provider", lang),
+         f'<span class="provider-chip">{esc(model.provider)}</span>' if model.provider else nao_declarado),
+        (translate("table.connection", lang),
+         esc(model.connection_name) if model.connection_name else nao_declarado),
+        (translate("table.status", lang), health_badge(model.health_status, lang)),
+        (translate("table.source", lang),
+         f'<span class="font-monospace">{esc(model.source)}</span>' if model.source else nao_declarado),
+        (translate("table.context_limit", lang), numero(model.input_token_limit)),
+        (translate("table.output_limit", lang), numero(model.output_token_limit)),
+        (translate("table.endpoints", lang),
+         f'<span class="font-monospace">{esc(", ".join(model.supported_endpoints))}</span>'
+         if model.supported_endpoints else nao_declarado),
+    ]
+    extra = f'<p class="text-secondary small mb-0 mt-3">{esc(translate("models.inherited", lang))}</p>'
+    if model.description:
+        extra = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.description", lang))}</p>'
+                 f'<p class="small mb-0">{esc(model.description)}</p>' + extra)
+    return render_detail_modal(modal_id, model.id, linhas, lang, extra)
+
+
+def render_models_table(models: List[Any], lang: str, estado_do_catalogo: str = "ok",
+                        consulta: Any = None) -> str:
+    """Modelos que o gateway publica, nas mesmas sete colunas dos irmaos.
+
+    `estado_do_catalogo` carrega POR QUE a lista veio vazia. Sem isso, "nenhum
+    modelo" e "nao deu para perguntar" desenham a mesma tela, e o operador vai
+    procurar um cadastro faltando quando o problema era o gateway nao ter
+    respondido.
+    """
+    if not models:
+        motivo = {
+            "no_key": "models.no_key",
+            "unreachable": "models.unreachable",
+        }.get(estado_do_catalogo, "models.empty")
+        return estado_vazio(translate(motivo, lang))
+
+    visiveis, estado = recortar(models, "modelos", consulta)
+    rows = []
+    detalhes = []
+    for indice, model in enumerate(visiveis):
+        modal_id = f"detalhe-modelo-{indice}"
+        provedor = (f'<span class="provider-chip">{esc(model.provider)}</span>'
+                    if model.provider else '<span class="text-secondary">—</span>')
+        rows.append(f"""
+            <tr>
+              <td>{provedor}</td>
+              <td class="fw-semibold font-monospace">{esc(model.id)}</td>
+              <td class="text-nowrap">
+                <i class="bi bi-cpu me-1 text-secondary" aria-hidden="true"></i>{esc(translate("type.synced_model", lang))}
+              </td>
+              <td>{health_badge(model.health_status, lang)}</td>
+              <td class="text-nowrap">{render_remaining_seconds(model.remaining_seconds, lang)}</td>
+              <td class="text-nowrap small">{render_timestamp_cell(model.last_refresh_at, lang, "bi-arrow-repeat")}</td>
+              <td class="text-end">{detail_button(modal_id, lang)}</td>
+            </tr>""")
+        detalhes.append(render_model_details(model, modal_id, lang))
+
+    return grid_paginado("modelos", cabecalho_de_dominio(rows, lang), estado, consulta,
+                         lang, "".join(detalhes))
+
+
+def render_connection_details(conn: Any, refresh_margin: int, sharing_count: int, lang: str) -> str:
+    """Modal com o que nao cabe na linha da tabela.
+
+    A tabela existe para varrer muitas conexoes de relance; o diagnostico e uma
+    frase inteira, e espremido entre sete colunas ele sobrepunha a coluna
+    vizinha. Aqui ele aparece por extenso, junto do resto do estado daquela
+    conexao, sem competir com nada.
+    """
+    linhas = [
+        (translate("table.provider", lang), f'<span class="provider-chip">{esc(conn.provider)}</span>'),
+        (translate("table.status", lang), health_badge(conn.health_status, lang)),
+        (translate("table.remaining", lang), render_remaining(conn, lang)),
+        (translate("table.last_refresh", lang), render_last_refresh(conn, lang)),
+    ]
+    if conn.is_local and conn.base_url:
+        linhas.append((translate("table.type", lang),
+                       f'<span class="font-monospace">{esc(conn.base_url)}</span>'))
+    if not conn.is_local:
+        chip = egress_chip(conn, sharing_count, lang)
+        if chip:
+            linhas.append((translate("egress.title", lang), chip))
+
+    modelos = ""
+    if conn.is_local and conn.local_models:
+        itens = "".join(f'<li class="font-monospace small">{esc(m)}</li>' for m in conn.local_models)
+        modelos = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.models", lang))}</p>'
+                   f'<ul class="mb-0">{itens}</ul>')
+
+    extra = (
+        f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.diagnosis", lang))}</p>'
+        f'<p class="mb-0">{esc(render_refresh_reason(conn, refresh_margin, lang))}</p>'
+        f'{modelos}'
     )
-    # O botao e um <a>, NUNCA um <form>: a CSP do painel declara
-    # `form-action 'self'` e o navegador bloqueia, sem erro visivel na tela, a
-    # submissao de um formulario que redireciona para fora.
-    #
-    # O formulario de senha continua acima dele em qualquer configuracao. SSO e
-    # uma segunda porta, nunca a unica: se o provedor cair e o formulario tiver
-    # saido da tela, ninguem entra.
-    sso_html = ""
-    if sso_nome:
-        sso_html = (
-            '<div class="text-center text-secondary small my-3">&middot; &middot; &middot;</div>'
-            f'<a class="btn btn-outline-light w-100" href="/sso/oidc/iniciar">'
-            f'<i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>'
-            f'{esc(translate("sso.sign_in_with", lang, provider=sso_nome))}</a>'
-        )
-    elif sso_indisponivel:
-        sso_html = (
-            '<p class="text-secondary small mt-3 mb-0 d-flex align-items-start gap-2">'
-            '<i class="bi bi-plug" aria-hidden="true"></i>'
-            f'<span>{esc(translate("sso.unavailable", lang))}</span></p>'
-        )
-    return f"""<!DOCTYPE html>
-<html lang="{esc(lang)}" data-bs-theme="dark">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  <link rel="icon" href="{FAVICON}">
-  <title>{NOME_DO_PRODUTO}</title>
-  <link rel="stylesheet" href="{BOOTSTRAP_CSS}">
-  <link rel="stylesheet" href="{BOOTSTRAP_ICONS}">
-  <style>
-    :root {{ {tokens_antes_do_login()} }}
-    body {{ background: var(--bg); color: var(--text); font-family: {FONT_STACK}; }}
-    .card {{ background: var(--surface); border: 1px solid var(--line); }}
-    .btn-primary {{ --bs-btn-bg: var(--accent); --bs-btn-border-color: var(--accent);
-                    --bs-btn-color: var(--bg); --bs-btn-hover-bg: var(--accent);
-                    --bs-btn-hover-border-color: var(--accent); --bs-btn-hover-color: var(--bg); }}
-    .form-control {{ background: var(--bg); border-color: var(--line); color: var(--text); }}
-    .form-control:focus {{ background: var(--bg); color: var(--text);
-                           border-color: var(--accent); box-shadow: none; }}
-  </style>
-</head>
-<body class="d-flex align-items-center justify-content-center" style="min-height:100vh">
-  <main class="card" style="max-width:24rem;width:100%">
-    <div class="card-body p-4">
-      <h1 class="h5 mb-1 d-flex align-items-center gap-2">
-        <i class="bi bi-shield-lock" aria-hidden="true"></i>{NOME_DO_PRODUTO}
-      </h1>
-      <p class="text-secondary small mb-4">{esc(translate("auth.login_intro", lang))}</p>
-      {aviso}
-      <form method="post" action="/login">
-        <div class="mb-3">
-          <label class="form-label small" for="usuario">{esc(translate("auth.user", lang))}</label>
-          <input class="form-control" id="usuario" name="usuario" autocomplete="username" autofocus required>
-        </div>
-        <div class="mb-4">
-          <label class="form-label small" for="senha">{esc(translate("auth.password", lang))}</label>
-          <input class="form-control" id="senha" name="senha" type="password"
-                 autocomplete="current-password" required>
-        </div>
-        {desafio_html}
-        <button class="btn btn-primary w-100" type="submit">
-          <i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>{esc(translate("auth.enter", lang))}
-        </button>
-      </form>
-      {sso_html}
-    </div>
-  </main>
-</body>
-</html>""".encode("utf-8")
+    return render_detail_modal(f"detalhe-{conn.id}", conn.name, linhas, lang, extra)
 
 
-def health_badge(status: str, lang: str) -> str:
-    """Monta o badge de saúde com ícone de fonte."""
-    css, icon = HEALTH_PRESENTATION.get(status, HEALTH_PRESENTATION["unknown"])
-    label = translate(f"health.{status}", lang)
-    return (
-        f'<span class="badge {css} d-inline-flex align-items-center gap-1">'
-        f'<i class="bi {icon}" aria-hidden="true"></i>{esc(label)}</span>'
+def render_connections_table(connections: List[Any], refresh_margin: int, lang: str,
+                             consulta: Any = None) -> str:
+    if not connections:
+        return estado_vazio(translate("connections.empty", lang),
+                            translate("connections.empty_hint", lang))
+
+    # Quantas contas de nuvem saem pelo endereço padrão do gateway. Conta-se
+    # sobre a lista INTEIRA, e não sobre a página: o alerta é sobre quantas
+    # identidades dividem o endereço, e isso não muda quando se vira a página.
+    # Uma conta sozinha compartilhando não é problema nenhum -- ela é a única a
+    # usar aquele IP. O alerta só faz sentido a partir da segunda, que é quando
+    # o provedor passa a ver identidades distintas na mesma origem.
+    compartilhando = sum(
+        1 for c in connections if not c.is_local and c.egress_status == "shared"
     )
 
+    visiveis, estado = recortar(connections, "conexoes", consulta)
+    rows = []
+    detalhes = []
+    for c in visiveis:
+        if c.is_local:
+            kind, kind_icon = translate("type.local", lang), "bi-hdd-network"
+        elif c.is_oauth:
+            kind, kind_icon = translate("type.oauth", lang), "bi-person-badge"
+        elif c.has_api_key:
+            kind, kind_icon = translate("type.api_key", lang), "bi-key"
+        else:
+            kind, kind_icon = translate("type.local", lang), "bi-hdd-network"
 
-def render_language_switcher(current: str) -> str:
-    """Seletor de idioma com bandeiras reais (flag-icons), não emoji."""
-    current = normalize_language(current)
-    _, current_flag = LANGUAGES[current]
+        # Instancia local: mostra a origem e os modelos que ela realmente serve.
+        detail = ""
+        if c.is_local:
+            models = c.local_models
+            parts = []
+            if c.base_url:
+                parts.append(f'<span class="font-monospace">{esc(c.base_url)}</span>')
+            if models:
+                preview = ", ".join(models[:3]) + (f" (+{len(models) - 3})" if len(models) > 3 else "")
+                parts.append(
+                    f'<span class="badge text-bg-dark">{len(models)} '
+                    f'{esc(translate("table.models", lang))}</span> {esc(preview)}'
+                )
+            if parts:
+                detail = f'<div class="small text-secondary mt-1">{" · ".join(parts)}</div>'
+        else:
+            # Saída de rede: somente leitura. Quem roteia a requisição é o
+            # gateway; o painel existe para que o operador veja quais contas
+            # dividem endereço antes que o provedor veja primeiro.
+            chip = egress_chip(c, compartilhando, lang)
+            if chip:
+                detail = f'<div class="small mt-1">{chip}</div>'
+
+        rows.append(f"""
+            <tr>
+              <td><span class="provider-chip">{esc(c.provider)}</span></td>
+              <td class="fw-semibold">{esc(c.name)}{detail}</td>
+              <td class="text-nowrap">
+                <i class="bi {kind_icon} me-1 text-secondary" aria-hidden="true"></i>{esc(kind)}
+              </td>
+              <td>{health_badge(c.health_status, lang)}</td>
+              <td class="text-nowrap">{render_remaining(c, lang, curto=True)}</td>
+              <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
+              <td class="text-end">{detail_button(f"detalhe-{c.id}", lang)}</td>
+            </tr>""")
+        detalhes.append(render_connection_details(c, refresh_margin, compartilhando, lang))
+
+    return grid_paginado("conexoes", cabecalho_de_dominio(rows, lang), estado, consulta,
+                         lang, "".join(detalhes))
+
+
+def render_combos_table(combos: List[Dict[str, Any]], lang: str, consulta: Any = None) -> str:
+    """Combos de resiliencia: o combo e a cascata que ele aciona.
+
+    O tipo do fallback vira um chip ao lado do nome quando o gateway o
+    classifica. Dois combos com o mesmo modelo principal e cascatas diferentes,
+    sem dizer por que disparam, confundiriam; um gateway que nao classifica nao
+    manda a chave, e a linha sai sem chip.
+    """
+    if not combos:
+        return estado_vazio(translate("combos.empty", lang),
+                            translate("combos.empty_hint", lang))
+
+    visiveis, estado = recortar(combos, "combos", consulta)
+    rows = []
+    for combo in visiveis:
+        models = combo.get("models") or []
+        if isinstance(models, str):
+            models = [models]
+        preview = ", ".join(str(m) for m in models[:4])
+        if len(models) > 4:
+            preview += f" (+{len(models) - 4})"
+        chave_do_tipo = combo.get("kindLabelKey") or ""
+        chip = (f' <span class="provider-chip">{esc(translate(chave_do_tipo, lang))}</span>'
+                if chave_do_tipo else "")
+        rows.append(f"""
+            <tr>
+              <td class="fw-semibold">{esc(combo.get("name", "—"))}{chip}</td>
+              <td class="small text-secondary">{esc(preview) or "—"}</td>
+            </tr>""")
+
+    tabela = f"""
+        <div class="table-responsive">
+          <table class="table table-dark table-hover align-middle mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{esc(translate("table.combo", lang))}</th>
+                <th scope="col">{esc(translate("table.cascade", lang))}</th>
+              </tr>
+            </thead>
+            <tbody>{"".join(rows)}
+            </tbody>
+          </table>
+        </div>"""
+    return grid_paginado("combos", tabela, estado, consulta, lang)
+
+
+def render_cron_history(history: List[Dict[str, Any]], lang: str) -> str:
+    """Lista de execuções do agendador, cada uma com o log do que aconteceu.
+
+    O contador sozinho não distingue "nada a relatar" de "a inspeção falhou".
+    O log de cada ciclo é o que responde a essa pergunta sem obrigar ninguém a
+    abrir o arquivo de log do serviço.
+    """
+    if not history:
+        return f'<p class="text-secondary small mb-0">{esc(translate("cron.no_runs", lang))}</p>'
+
     items = []
-    for code, (label, flag) in LANGUAGES.items():
-        active = " active" if code == current else ""
-        items.append(
-            f'<li><button class="dropdown-item d-flex align-items-center gap-2{active}" '
-            f'type="submit" name="lang" value="{esc(code)}">'
-            f'<span class="fi {esc(flag)}"></span>{esc(label)}</button></li>'
+    for index, entry in enumerate(history):
+        failed = not entry.get("success", True) or entry.get("error")
+        tone = "danger" if failed else "secondary"
+        icon = "bi-exclamation-octagon-fill" if failed else "bi-check-circle"
+        log_lines = entry.get("log") or []
+        if entry.get("error") and not any(str(entry["error"]) in line for line in log_lines):
+            log_lines = [f"ERRO: {entry['error']}", *log_lines]
+
+        body = (
+            "<pre class=\"cron-log mb-0\">" + esc("\n".join(log_lines)) + "</pre>"
+            if log_lines
+            else f'<p class="text-secondary small mb-0">{esc(translate("cron.no_runs", lang))}</p>'
         )
-    return f"""
-        <form method="post" action="/acoes/idioma" class="m-0 dropdown">
-          <button class="btn btn-outline-light btn-sm dropdown-toggle d-inline-flex align-items-center gap-2"
-                  type="button" data-bs-toggle="dropdown" aria-expanded="false"
-                  aria-label="{esc(translate('language.label', current))}">
-            <span class="fi {esc(current_flag)}"></span>
-          </button>
-          <ul class="dropdown-menu dropdown-menu-end">{"".join(items)}
-          </ul>
-        </form>"""
 
-
-def metric_card(label: str, value: Any, icon: str, tone: str) -> str:
-    return f"""
-      <div class="col-6 col-lg-3">
-        <div class="card metric h-100">
-          <div class="card-body">
-            <div class="d-flex align-items-center gap-2 metric-label">
-              <i class="bi {icon} {tone}" aria-hidden="true"></i><span>{esc(label)}</span>
+        items.append(f"""
+          <div class="accordion-item">
+            <h3 class="accordion-header">
+              <button class="accordion-button collapsed py-2" type="button"
+                      data-bs-toggle="collapse" data-bs-target="#ciclo{index}"
+                      aria-expanded="false" aria-controls="ciclo{index}">
+                <span class="d-flex align-items-center gap-2 w-100 pe-3">
+                  <i class="bi {icon} text-{tone}" aria-hidden="true"></i>
+                  <span class="font-monospace small">{esc(format_timestamp(entry.get("timestamp")))}</span>
+                  <span class="ms-auto small text-secondary">
+                    {esc(linha_do_ciclo(entry, lang))}
+                  </span>
+                </span>
+              </button>
+            </h3>
+            <div id="ciclo{index}" class="accordion-collapse collapse">
+              <div class="accordion-body py-2">{body}</div>
             </div>
-            <div class="metric-value {tone}">{esc(value)}</div>
+          </div>""")
+
+    return f'<div class="accordion accordion-flush" id="historicoCron">{"".join(items)}</div>'
+
+
+def linha_do_ciclo(resultado: Dict[str, Any], lang: str) -> str:
+    """O resumo de um ciclo: quantos foram olhados e o que o ciclo produziu.
+
+    Os dois marcadores viajam juntos porque o trabalho do agendador muda com o
+    gateway -- um renova credencial, outro relata achado -- e a frase traduzida
+    usa o marcador do seu produto. `str.format` ignora o que sobra, entao passar
+    os dois deixa a MESMA chamada correta nos tres paineis; escolher um faria a
+    contagem do outro aparecer zerada na tela.
+    """
+    renovados = resultado.get("refreshedCount", resultado.get("findingsCount", 0))
+    achados = resultado.get("findingsCount", resultado.get("refreshedCount", 0))
+    return translate(
+        "cron.result_line",
+        lang,
+        inspected=resultado.get("totalInspected", 0),
+        refreshed=renovados,
+        findings=achados,
+        duration=resultado.get("durationMs", 0),
+    )
+
+
+def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
+    """Cartão do agendador: o estado do ciclo e o resultado da última passada."""
+    active = bool(cron.get("active"))
+    state_icon = "bi-broadcast text-success" if active else "bi-pause-circle text-secondary"
+    state_text = (
+        translate("cron.active", lang, interval=cron.get("intervalSeconds", "—"))
+        if active
+        else translate("cron.disabled", lang)
+    )
+    last = cron.get("lastResult") or {}
+    failed = bool(last) and (not last.get("success", True) or last.get("error"))
+
+    # O acumulado do agendador conta uma coisa em cada gateway: um soma
+    # credenciais renovadas, o outro soma achados da inspecao. Quem diz qual e o
+    # proprio estado, pelo contador que ele mantem -- rotular pelo produto faria
+    # a tela prometer um numero que aquele ciclo nunca produz.
+    if "totalFindings" in cron:
+        rotulo_do_total, total_do_ciclo = "cron.total_findings", cron.get("totalFindings", 0)
+    else:
+        rotulo_do_total, total_do_ciclo = "cron.total_renewals", cron.get("totalRenewals", 0)
+
+    return f"""
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span class="d-inline-flex align-items-center gap-2">
+            <i class="bi bi-alarm" aria-hidden="true"></i>{esc(translate("cron.title", lang))}
+          </span>
+          <div class="d-flex gap-2">
+            <button class="btn btn-outline-light btn-sm" type="button"
+                    data-bs-toggle="modal" data-bs-target="#modalHistorico">
+              <i class="bi bi-list-columns-reverse me-1" aria-hidden="true"></i>Logs
+              {'<span class="badge text-bg-danger ms-1">!</span>' if failed else ""}
+            </button>
+            <form method="post" action="/acoes/cron" class="m-0">
+              <button class="btn btn-outline-light btn-sm" type="submit">
+                <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{esc(translate("cron.run_now", lang))}
+              </button>
+            </form>
           </div>
         </div>
-      </div>"""
-
-
-def render_security_banner(is_default_password: bool, lang: str) -> str:
-    if not is_default_password:
-        return ""
-    return f"""
-      <div class="alert alert-warning d-flex align-items-center justify-content-between gap-3" role="alert">
-        <div class="d-flex align-items-start gap-2">
-          <i class="bi bi-shield-exclamation fs-5" aria-hidden="true"></i>
-          <div><strong>{esc(translate("security.title", lang))}</strong>
-            {translate("security.body", lang)}</div>
+        <div class="card-body">
+          <p class="d-flex align-items-center gap-2 mb-3">
+            <i class="bi {state_icon}" aria-hidden="true"></i><span>{esc(state_text)}</span>
+          </p>
+          <dl class="row mb-0 small">
+            <dt class="col-4 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
+            <dd class="col-8 text-end font-monospace text-nowrap">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
+            <dt class="col-4 text-secondary fw-normal">{esc(translate(rotulo_do_total, lang))}</dt>
+            <dd class="col-8 text-end font-monospace">{esc(total_do_ciclo)}</dd>
+            <dt class="col-4 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
+            <dd class="col-8 text-end font-monospace small mb-0 mt-2 {'text-danger' if failed else ''}">
+              {esc(linha_do_ciclo(last, lang) if last else translate("cron.no_runs", lang))}
+              {esc(last.get("error") or "")}
+            </dd>
+          </dl>
         </div>
-        <button class="btn btn-warning btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#modalCredenciais">
-          <i class="bi bi-key-fill me-1" aria-hidden="true"></i>{esc(translate("action.change_credentials", lang))}
-        </button>
       </div>"""
 
+
+def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str:
+    """Cartão de liveness do gateway.
+
+    Existe para que "o painel está de pé" e "o gateway está de pé" nunca sejam
+    confundidos: são dois processos distintos, e o painel responde mesmo com o
+    gateway fora.
+
+    As linhas de banco e de diagnóstico só aparecem quando o estado TRAZ a
+    bandeira `dbOk`. Um gateway que não guarda banco próprio não tem o que dizer
+    ali, e desenhar "banco não encontrado" para ele afirmaria uma falha que não
+    existe.
+    """
+    online = bool(gateway.get("online"))
+    tone = "text-success" if online else "text-danger"
+    icon = "bi-plug-fill" if online else "bi-plug"
+    codigo = gateway.get("statusCode")
+    label = (
+        (f'ONLINE (HTTP {esc(codigo)})' if codigo else "ONLINE")
+        if online
+        else f'{esc(translate("gateway.offline", lang))} — '
+             f'{esc(gateway.get("error") or translate("gateway.no_response", lang))}'
+    )
+
+    # Le a bandeira; o resumo textual nunca serve como booleano.
+    tem_banco = "dbOk" in gateway
+    db_ok = bool(gateway.get("dbOk"))
+    if online and db_ok:
+        diagnosis = translate("gateway.diag_ok", lang)
+    elif online:
+        diagnosis = translate("gateway.diag_db_failed", lang)
+    else:
+        diagnosis = translate("gateway.diag_gateway_failed", lang)
+
+    bloco_do_banco = f"""
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.database", lang))}</dt>
+            <dd class="col-7 text-end font-monospace text-truncate" title="{esc(db_path)}">
+              {esc(translate("gateway.db_summary", lang,
+                            connections=gateway.get("dbConnections", 0),
+                            combos=gateway.get("dbCombos", 0))
+                   if db_ok else translate("gateway.db_missing", lang))}
+            </dd>
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.diagnostics", lang))}</dt>
+            <dd class="col-7 text-end font-monospace mb-0 {tone}">{esc(diagnosis)}</dd>""" if tem_banco else ""
+
+    return f"""
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span class="d-inline-flex align-items-center gap-2">
+            <i class="bi bi-hdd-network" aria-hidden="true"></i>{esc(translate("gateway.title", lang))}
+          </span>
+          <form method="post" action="/acoes/testar-gateway" class="m-0">
+            <button class="btn btn-outline-light btn-sm" type="submit">
+              <i class="bi bi-activity me-1" aria-hidden="true"></i>{esc(translate("action.test_connection", lang))}
+            </button>
+          </form>
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0 small">
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.gateway", lang))}</dt>
+            <dd class="col-7 text-end font-monospace text-truncate">{esc(gateway.get("url") or "—")}</dd>
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.status", lang))}</dt>
+            <dd class="col-7 text-end font-monospace {tone}">
+              <i class="bi {icon} me-1" aria-hidden="true"></i>{label}
+            </dd>
+            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.latency", lang))}</dt>
+            <dd class="col-7 text-end font-monospace{'' if tem_banco else ' mb-0'}">{esc(gateway.get("latencyMs", "—"))} ms</dd>{bloco_do_banco}
+          </dl>
+        </div>
+      </div>"""
+
+
+def campo_de_texto(
+    nome: str, rotulo: str, valor: str, ajuda: str = "", tipo: str = "text",
+    travado: bool = False, marcador: str = "",
+) -> str:
+    """Um campo do formulario de SSO, com rotulo traduzido e ajuda opcional."""
+    dica = f'<div class="form-text">{esc(ajuda)}</div>' if ajuda else ""
+    return f"""
+            <div class="mb-3">
+              <label class="form-label small" for="sso_{esc(nome)}">{esc(rotulo)}</label>
+              <input class="form-control" id="sso_{esc(nome)}" name="{esc(nome)}"
+                     type="{esc(tipo)}" value="{esc(valor)}" placeholder="{esc(marcador)}"
+                     autocomplete="off"{' disabled' if travado else ''}>
+              {dica}
+            </div>"""
 
 
 def render_sso_modal(
     config: Dict[str, str],
     lang: str,
-    tem_segredo: bool,
-    segredo_do_ambiente: bool,
-    desligado_pelo_ambiente: bool,
-    endereco_de_retorno: str,
+    tem_segredo: bool = False,
+    segredo_do_ambiente: bool = False,
+    desligado_pelo_ambiente: bool = False,
+    endereco_de_retorno: str = "",
 ) -> str:
-    """Tela de configuracao da entrada federada, com as duas abas.
+    """Corpo do modal da entrada federada, com as duas abas.
+
+    A casca do modal (titulo, botao de fechar) e comum aos tres paineis e mora
+    em `render_dashboard`; daqui sai so o CORPO, que e a parte presa ao
+    formulario que `web.py` sabe receber.
 
     O segredo do cliente NUNCA volta para ca: o campo nasce vazio, a tela diz
     apenas se existe um guardado, e salvar em branco MANTEM o anterior. Um GET
@@ -586,27 +1366,16 @@ def render_sso_modal(
     ])
 
     return f"""
-  <div class="modal fade" id="modalSSO" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
-            <i class="bi bi-people" aria-hidden="true"></i>{esc(translate("sso.title", lang))}
-          </h2>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"
-                  aria-label="{esc(translate("action.close", lang))}"></button>
-        </div>
-        <div class="modal-body">
           {aviso_ambiente}
           <p class="text-secondary small">{esc(translate("sso.intro", lang))}</p>
           <form method="post" action="/acoes/sso">
-            <ul class="nav nav-pills nav-sso mb-3" role="tablist">
+            <ul class="nav nav-tabs mb-3" role="tablist">
               <li class="nav-item" role="presentation">
-                <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#abaOIDC"
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#abaOIDC"
                         type="button" role="tab">{esc(translate("sso.tab_oidc", lang))}</button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link" data-bs-toggle="pill" data-bs-target="#abaSAML"
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#abaSAML"
                         type="button" role="tab">{esc(translate("sso.tab_saml", lang))}</button>
               </li>
             </ul>
@@ -645,639 +1414,48 @@ def render_sso_modal(
             <button class="btn btn-primary w-100" type="submit">
               <i class="bi bi-save me-1" aria-hidden="true"></i>{esc(translate("sso.save", lang))}
             </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  </div>"""
-
-
-def cabecalho_de_dominio(rows: List[str], lang: str) -> str:
-    """A casca das tabelas de dominio: SEMPRE as mesmas sete colunas.
-
-    Conexoes, chaves virtuais e modelos sao coisas diferentes lidas do mesmo
-    jeito -- quem serve, como se chama, de que tipo e, como esta, quanto tempo
-    resta, quando foi renovado, e o (i) que abre o resto. Uma casca so mantem a
-    largura das colunas identica entre os cartoes e entre os tres paineis.
-    """
-    return f"""
-        <div class="table-responsive">
-          <table class="table table-dark table-hover align-middle mb-0 tabela-dominio">
-            <colgroup>
-              <col class="c-provedor"><col class="c-nome"><col class="c-tipo">
-              <col class="c-status"><col class="c-validade"><col class="c-renovacao">
-              <col class="c-detalhe">
-            </colgroup>
-            <thead>
-              <tr>
-                <th scope="col">{esc(translate("table.provider", lang))}</th>
-                <th scope="col">{esc(translate("table.name", lang))}</th>
-                <th scope="col">{esc(translate("table.type", lang))}</th>
-                <th scope="col">{esc(translate("table.status", lang))}</th>
-                <th scope="col">{esc(translate("table.remaining", lang))}</th>
-                <th scope="col">{esc(translate("table.last_refresh", lang))}</th>
-                <th scope="col" class="text-end">{esc(translate("table.details", lang))}</th>
-              </tr>
-            </thead>
-            <tbody>{"".join(rows)}
-            </tbody>
-          </table>
-        </div>"""
-
-
-def estado_vazio(mensagem: str) -> str:
-    """O bloco de estado vazio da familia: icone bi-inbox e uma frase.
-
-    Os quatro cartoes de tabela usam exatamente este bloco. Cada um deles existe
-    nos tres paineis por contrato; quando o gateway deste produto nao tem aquele
-    conceito, ou ainda nao tem dado nenhum, o cartao continua na tela e a frase
-    diz por que esta vazio AQUI. Assimetria de cartoes e pior que estado vazio.
-    """
-    return f"""
-        <div class="text-center text-secondary py-5">
-          <i class="bi bi-inbox fs-1 d-block mb-2" aria-hidden="true"></i>
-          {esc(mensagem)}
-        </div>"""
-
-
-def detail_button(modal_id: str, lang: str) -> str:
-    """Botao (i) da linha, que abre o modal de detalhe daquele item."""
-    return f"""<button class="btn btn-outline-light btn-sm py-0 px-2" type="button"
-                        data-bs-toggle="modal" data-bs-target="#{esc(modal_id)}"
-                        title="{esc(translate("table.details", lang))}">
-                  <i class="bi bi-info-circle" aria-hidden="true"></i>
-                </button>"""
-
-
-def render_detail_modal(modal_id: str, titulo: str, linhas: List[tuple], lang: str,
-                        extra: str = "") -> str:
-    """Modal de detalhe no formato que a familia usa: titulo, pares e um extra.
-
-    O modal e devolvido como bloco solto para ser emitido DEPOIS da tabela: um
-    `<div>` dentro de `<tbody>` e HTML invalido, e o navegador o move sozinho
-    para fora -- o que transforma cada linha da tabela numa surpresa de layout.
-    """
-    corpo = "".join(
-        f'<dt class="col-5 text-secondary fw-normal">{esc(rotulo)}</dt>'
-        f'<dd class="col-7 text-end">{valor}</dd>'
-        for rotulo, valor in linhas
-    )
-    return f"""
-  <div class="modal fade" id="{esc(modal_id)}" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
-            <i class="bi bi-info-circle" aria-hidden="true"></i>{esc(titulo)}
-          </h2>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"
-                  aria-label="{esc(translate("action.close", lang))}"></button>
-        </div>
-        <div class="modal-body">
-          <dl class="row mb-0 small">{corpo}</dl>
-          {extra}
-        </div>
-      </div>
-    </div>
-  </div>"""
-
-
-def render_remaining_seconds(remaining: Optional[int], lang: str) -> str:
-    """Validade restante de um item que nao e conexao (chave virtual, modelo).
-
-    Sem prazo declarado a chave e estatica: vale ate ser desativada, e isso e
-    "sem expiracao" de verdade -- nao o dado ausente que render_remaining trata
-    com cautela no caso do OAuth.
-    """
-    if remaining is not None:
-        return esc(format_duration(remaining, lang))
-    return f'<span class="text-secondary">{esc(translate("duration.no_expiry_short", lang))}</span>'
-
-
-def render_timestamp_cell(carimbo: Optional[str], lang: str, icone: str) -> str:
-    """Celula de carimbo de tempo curto, com o valor inteiro guardado no modal."""
-    if not carimbo:
-        return f'<span class="text-secondary">{esc(translate("table.never_refreshed", lang))}</span>'
-    return (f'<i class="bi {icone} me-1 text-secondary" aria-hidden="true"></i>'
-            f'<span class="font-monospace">{esc(format_timestamp_curto(carimbo))}</span>')
-
-
-def key_state_label(key: Any, lang: str) -> str:
-    """Por qual caminho a chave foi recusada -- ou que ela segue aceita.
-
-    A celula da tabela diz "recusada" nos tres casos, porque o efeito e o mesmo.
-    Qual deles foi so cabe aqui, no modal.
-    """
-    dados = key.data
-    if dados.get("isBanned"):
-        return translate("keys.banned", lang)
-    if dados.get("revokedAt"):
-        return translate("keys.revoked", lang)
-    if dados.get("isActive") is False:
-        return translate("keys.disabled", lang)
-    return translate("keys.enabled", lang)
-
-
-def render_key_details(key: Any, modal_id: str, lang: str) -> str:
-    """Modal com o que nao cabe na linha da chave virtual.
-
-    Escopos, modo de acesso, tetos de requisicao e o instante exato de emissao
-    sao diagnostico: espremidos na tabela empurrariam as colunas uteis para fora
-    da tela. O TOKEN nunca entra aqui -- ele sequer e lido do banco.
-    """
-    acesso = (
-        translate("keys.access_restricted", lang)
-        if key.model_access_mode == "restricted"
-        else translate("keys.access_all", lang)
-    )
-    escopos = ", ".join(key.scopes) if key.scopes else translate("table.not_declared", lang)
-    linhas = [
-        (translate("table.status", lang), health_badge(key.health_status, lang)),
-        (translate("table.key_state", lang), esc(key_state_label(key, lang))),
-        (translate("table.remaining", lang), render_remaining_seconds(key.remaining_seconds, lang)),
-        (translate("table.issued_at", lang),
-         f'<span class="font-monospace">{esc(format_timestamp(key.issued_at))}</span>'),
-        (translate("table.last_used", lang),
-         f'<span class="font-monospace">{esc(format_timestamp(key.last_used_at))}</span>'),
-        (translate("table.model_access", lang), esc(acesso)),
-        (translate("table.scopes", lang), f'<span class="font-monospace">{esc(escopos)}</span>'),
-    ]
-    extra = ""
-    if key.allowed_models:
-        itens = "".join(f'<li class="font-monospace small">{esc(m)}</li>' for m in key.allowed_models)
-        extra = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.models", lang))}</p>'
-                 f'<ul class="mb-0">{itens}</ul>')
-    return render_detail_modal(modal_id, key.name, linhas, lang, extra)
-
-
-def render_keys_table(keys: List[Any], lang: str) -> str:
-    """Chaves virtuais emitidas pelo gateway, uma por linha, nas sete colunas."""
-    if not keys:
-        return estado_vazio(translate("keys.empty", lang))
-
-    rows = []
-    detalhes = []
-    # Id do modal pelo INDICE, nunca pelo nome: nome de chave aceita espaco,
-    # acento e barra, e nada disso vale como id de elemento HTML.
-    for indice, key in enumerate(keys):
-        modal_id = f"detalhe-chave-{indice}"
-        rows.append(f"""
-            <tr>
-              <td><span class="provider-chip">{esc(PROVEDOR_DO_GATEWAY)}</span></td>
-              <td class="fw-semibold">{esc(key.name)}</td>
-              <td class="text-nowrap">
-                <i class="bi bi-key me-1 text-secondary" aria-hidden="true"></i>{esc(translate("type.virtual_key", lang))}
-              </td>
-              <td>{health_badge(key.health_status, lang)}</td>
-              <td class="text-nowrap">{render_remaining_seconds(key.remaining_seconds, lang)}</td>
-              <td class="text-nowrap small">{render_timestamp_cell(key.issued_at, lang, "bi-clock")}</td>
-              <td class="text-end">{detail_button(modal_id, lang)}</td>
-            </tr>""")
-        detalhes.append(render_key_details(key, modal_id, lang))
-
-    return cabecalho_de_dominio(rows, lang) + "".join(detalhes)
-
-
-def render_model_details(model: Any, modal_id: str, lang: str) -> str:
-    """Modal com o que nao cabe na linha do modelo.
-
-    Os limites de contexto, os endpoints e a descricao sao texto longo; o nome
-    da conexao dona esta aqui porque e ele que explica de onde vem o status da
-    linha -- um modelo nao tem saude propria.
-    """
-    nao_declarado = f'<span class="text-secondary">{esc(translate("table.not_declared", lang))}</span>'
-
-    def numero(valor: Any) -> str:
-        return f'<span class="font-monospace">{esc(f"{valor:,}".replace(",", " "))}</span>' \
-            if isinstance(valor, int) else nao_declarado
-
-    linhas = [
-        (translate("table.provider", lang),
-         f'<span class="provider-chip">{esc(model.provider)}</span>' if model.provider else nao_declarado),
-        (translate("table.connection", lang),
-         esc(model.connection_name) if model.connection_name else nao_declarado),
-        (translate("table.status", lang), health_badge(model.health_status, lang)),
-        (translate("table.source", lang),
-         f'<span class="font-monospace">{esc(model.source)}</span>' if model.source else nao_declarado),
-        (translate("table.context_limit", lang), numero(model.input_token_limit)),
-        (translate("table.output_limit", lang), numero(model.output_token_limit)),
-        (translate("table.endpoints", lang),
-         f'<span class="font-monospace">{esc(", ".join(model.supported_endpoints))}</span>'
-         if model.supported_endpoints else nao_declarado),
-    ]
-    extra = f'<p class="text-secondary small mb-0 mt-3">{esc(translate("models.inherited", lang))}</p>'
-    if model.description:
-        extra = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.description", lang))}</p>'
-                 f'<p class="small mb-0">{esc(model.description)}</p>' + extra)
-    return render_detail_modal(modal_id, model.id, linhas, lang, extra)
-
-
-def render_models_table(models: List[Any], lang: str, estado: str = "ok") -> str:
-    """Modelos que o gateway publica, nas mesmas sete colunas dos irmaos.
-
-    `estado` carrega POR QUE a lista veio vazia. Sem isso, "nenhum modelo" e
-    "nao deu para perguntar" desenham a mesma tela, e o operador vai procurar um
-    cadastro faltando quando o problema era o gateway nao ter respondido.
-    """
-    if not models:
-        motivo = {
-            "no_key": "models.no_key",
-            "unreachable": "models.unreachable",
-        }.get(estado, "models.empty")
-        return estado_vazio(translate(motivo, lang))
-
-    visiveis = models[:MAX_LINHAS_DE_MODELO]
-    rows = []
-    detalhes = []
-    for indice, model in enumerate(visiveis):
-        modal_id = f"detalhe-modelo-{indice}"
-        provedor = (f'<span class="provider-chip">{esc(model.provider)}</span>'
-                    if model.provider else '<span class="text-secondary">—</span>')
-        rows.append(f"""
-            <tr>
-              <td>{provedor}</td>
-              <td class="fw-semibold font-monospace">{esc(model.id)}</td>
-              <td class="text-nowrap">
-                <i class="bi bi-cpu me-1 text-secondary" aria-hidden="true"></i>{esc(translate("type.synced_model", lang))}
-              </td>
-              <td>{health_badge(model.health_status, lang)}</td>
-              <td class="text-nowrap">{render_remaining_seconds(model.remaining_seconds, lang)}</td>
-              <td class="text-nowrap small">{render_timestamp_cell(model.last_refresh_at, lang, "bi-arrow-repeat")}</td>
-              <td class="text-end">{detail_button(modal_id, lang)}</td>
-            </tr>""")
-        detalhes.append(render_model_details(model, modal_id, lang))
-
-    # Truncar em silencio seria mentir sobre o tamanho do catalogo.
-    rodape = ""
-    if len(models) > len(visiveis):
-        rodape = (f'<p class="text-secondary small mb-0 px-3 py-2">'
-                  f'{esc(translate("models.showing", lang, shown=len(visiveis), total=len(models)))}</p>')
-
-    return cabecalho_de_dominio(rows, lang) + rodape + "".join(detalhes)
-
-
-def render_connection_details(conn: Any, refresh_margin: int, sharing_count: int, lang: str) -> str:
-    """Modal com o que nao cabe na linha da tabela.
-
-    A tabela existe para varrer muitas conexoes de relance; o diagnostico e uma
-    frase inteira, e espremido entre sete colunas ele sobrepunha a coluna
-    vizinha. Aqui ele aparece por extenso, junto do resto do estado daquela
-    conexao, sem competir com nada.
-    """
-    linhas = [
-        (translate("table.provider", lang), f'<span class="provider-chip">{esc(conn.provider)}</span>'),
-        (translate("table.status", lang), health_badge(conn.health_status, lang)),
-        (translate("table.remaining", lang), render_remaining(conn, lang)),
-        (translate("table.last_refresh", lang), render_last_refresh(conn, lang)),
-    ]
-    if conn.is_local and conn.base_url:
-        linhas.append((translate("table.type", lang),
-                       f'<span class="font-monospace">{esc(conn.base_url)}</span>'))
-    if not conn.is_local:
-        chip = egress_chip(conn, sharing_count, lang)
-        if chip:
-            linhas.append((translate("egress.title", lang), chip))
-
-    corpo = "".join(
-        f'<dt class="col-5 text-secondary fw-normal">{esc(rotulo)}</dt>'
-        f'<dd class="col-7 text-end">{valor}</dd>'
-        for rotulo, valor in linhas
-    )
-    modelos = ""
-    if conn.is_local and conn.local_models:
-        itens = "".join(f'<li class="font-monospace small">{esc(m)}</li>' for m in conn.local_models)
-        modelos = (f'<p class="text-secondary small mb-1 mt-3">{esc(translate("table.models", lang))}</p>'
-                   f'<ul class="mb-0">{itens}</ul>')
-
-    return f"""
-  <div class="modal fade" id="detalhe-{esc(conn.id)}" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
-            <i class="bi bi-info-circle" aria-hidden="true"></i>{esc(conn.name)}
-          </h2>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"
-                  aria-label="{esc(translate("action.close", lang))}"></button>
-        </div>
-        <div class="modal-body">
-          <dl class="row mb-0 small">{corpo}</dl>
-          <p class="text-secondary small mb-1 mt-3">{esc(translate("table.diagnosis", lang))}</p>
-          <p class="mb-0">{esc(render_refresh_reason(conn, refresh_margin, lang))}</p>
-          {modelos}
-        </div>
-      </div>
-    </div>
-  </div>"""
-
-
-def render_connections_table(connections: List[Any], refresh_margin: int, lang: str) -> str:
-    if not connections:
-        return estado_vazio(translate("connections.empty", lang))
-
-    # Quantas contas de nuvem saem pelo endereço padrão do gateway. Uma conta
-    # sozinha compartilhando não é problema nenhum -- ela é a única a usar
-    # aquele IP. O alerta só faz sentido a partir da segunda, que é quando o
-    # provedor passa a ver identidades distintas na mesma origem.
-    compartilhando = sum(
-        1 for c in connections if not c.is_local and c.egress_status == "shared"
-    )
-
-    rows = []
-    detalhes = []
-    for c in connections:
-        if c.is_local:
-            kind, kind_icon = translate("type.local", lang), "bi-hdd-network"
-        elif c.is_oauth:
-            kind, kind_icon = translate("type.oauth", lang), "bi-person-badge"
-        elif c.has_api_key:
-            kind, kind_icon = translate("type.api_key", lang), "bi-key"
-        else:
-            kind, kind_icon = translate("type.local", lang), "bi-hdd-network"
-
-        # Instancia local: mostra a origem e os modelos que ela realmente serve.
-        detail = ""
-        if c.is_local:
-            models = c.local_models
-            parts = []
-            if c.base_url:
-                parts.append(f'<span class="font-monospace">{esc(c.base_url)}</span>')
-            if models:
-                preview = ", ".join(models[:3]) + (f" (+{len(models) - 3})" if len(models) > 3 else "")
-                parts.append(
-                    f'<span class="badge text-bg-dark">{len(models)} '
-                    f'{esc(translate("table.models", lang))}</span> {esc(preview)}'
-                )
-            if parts:
-                detail = f'<div class="small text-secondary mt-1">{" · ".join(parts)}</div>'
-        else:
-            # Saída de rede: somente leitura. Quem roteia a requisição é o
-            # gateway; o painel existe para que o operador veja quais contas
-            # dividem endereço antes que o provedor veja primeiro.
-            chip = egress_chip(c, compartilhando, lang)
-            if chip:
-                detail = f'<div class="small mt-1">{chip}</div>'
-
-        rows.append(f"""
-            <tr>
-              <td><span class="provider-chip">{esc(c.provider)}</span></td>
-              <td class="fw-semibold">{esc(c.name)}{detail}</td>
-              <td class="text-nowrap">
-                <i class="bi {kind_icon} me-1 text-secondary" aria-hidden="true"></i>{esc(kind)}
-              </td>
-              <td>{health_badge(c.health_status, lang)}</td>
-              <td class="text-nowrap">{render_remaining(c, lang, curto=True)}</td>
-              <td class="text-nowrap small">{render_last_refresh(c, lang)}</td>
-              <td class="text-end">{detail_button(f"detalhe-{c.id}", lang)}</td>
-            </tr>""")
-        detalhes.append(render_connection_details(c, refresh_margin, compartilhando, lang))
-
-    return cabecalho_de_dominio(rows, lang) + "".join(detalhes)
-
-
-def render_combos_table(combos: List[Dict[str, Any]], lang: str) -> str:
-    if not combos:
-        return estado_vazio(translate("combos.empty", lang))
-
-    rows = []
-    for combo in combos:
-        models = combo.get("models") or []
-        if isinstance(models, str):
-            models = [models]
-        preview = ", ".join(str(m) for m in models[:4])
-        if len(models) > 4:
-            preview += f" (+{len(models) - 4})"
-        rows.append(f"""
-            <tr>
-              <td class="fw-semibold">{esc(combo.get("name", "—"))}</td>
-              <td class="small text-secondary">{esc(preview) or "—"}</td>
-            </tr>""")
-
-    return f"""
-        <div class="table-responsive">
-          <table class="table table-dark table-hover align-middle mb-0">
-            <thead>
-              <tr>
-                <th scope="col">{esc(translate("table.combo", lang))}</th>
-                <th scope="col">{esc(translate("table.cascade", lang))}</th>
-              </tr>
-            </thead>
-            <tbody>{"".join(rows)}
-            </tbody>
-          </table>
-        </div>"""
-
-
-def render_cron_history(history: List[Dict[str, Any]], lang: str) -> str:
-    """Lista de execuções do cron, cada uma com o log do que realmente aconteceu."""
-    if not history:
-        return f'<p class="text-secondary small mb-0">{esc(translate("cron.no_runs", lang))}</p>'
-
-    items = []
-    for index, entry in enumerate(history):
-        failed = not entry.get("success", True) or entry.get("error")
-        tone = "danger" if failed else "secondary"
-        icon = "bi-exclamation-octagon-fill" if failed else "bi-check-circle"
-        log_lines = entry.get("log") or []
-        if entry.get("error") and not any(str(entry["error"]) in line for line in log_lines):
-            log_lines = [f"ERRO: {entry['error']}", *log_lines]
-
-        body = (
-            "<pre class=\"cron-log mb-0\">" + esc("\n".join(log_lines)) + "</pre>"
-            if log_lines
-            else f'<p class="text-secondary small mb-0">{esc(translate("cron.no_runs", lang))}</p>'
-        )
-
-        items.append(f"""
-          <div class="accordion-item">
-            <h3 class="accordion-header">
-              <button class="accordion-button collapsed py-2" type="button"
-                      data-bs-toggle="collapse" data-bs-target="#ciclo{index}"
-                      aria-expanded="false" aria-controls="ciclo{index}">
-                <span class="d-flex align-items-center gap-2 w-100 pe-3">
-                  <i class="bi {icon} text-{tone}" aria-hidden="true"></i>
-                  <span class="font-monospace small">{esc(format_timestamp(entry.get("timestamp")))}</span>
-                  <span class="ms-auto small text-secondary">
-                    {esc(translate("cron.result_line", lang,
-                                   inspected=entry.get("totalInspected", 0),
-                                   refreshed=entry.get("refreshedCount", 0),
-                                   duration=entry.get("durationMs", 0)))}
-                  </span>
-                </span>
-              </button>
-            </h3>
-            <div id="ciclo{index}" class="accordion-collapse collapse">
-              <div class="accordion-body py-2">{body}</div>
-            </div>
-          </div>""")
-
-    return f'<div class="accordion accordion-flush" id="historicoCron">{"".join(items)}</div>'
-
-
-def render_cron_card(cron: Dict[str, Any], lang: str) -> str:
-    active = bool(cron.get("active"))
-    state_icon = "bi-broadcast text-success" if active else "bi-pause-circle text-secondary"
-    state_text = (
-        translate("cron.active", lang, interval=cron.get("intervalSeconds", "—"))
-        if active
-        else translate("cron.disabled", lang)
-    )
-    last = cron.get("lastResult") or {}
-    failed = bool(last) and (not last.get("success", True) or last.get("error"))
-
-    return f"""
-      <div class="card h-100">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span class="d-inline-flex align-items-center gap-2">
-            <i class="bi bi-alarm" aria-hidden="true"></i>{esc(translate("cron.title", lang))}
-          </span>
-          <div class="d-flex gap-2">
-            <button class="btn btn-outline-light btn-sm" type="button"
-                    data-bs-toggle="modal" data-bs-target="#modalHistorico">
-              <i class="bi bi-list-columns-reverse me-1" aria-hidden="true"></i>Logs
-              {'<span class="badge text-bg-danger ms-1">!</span>' if failed else ""}
-            </button>
-            <form method="post" action="/acoes/cron" class="m-0">
-              <button class="btn btn-outline-light btn-sm" type="submit">
-                <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{esc(translate("cron.run_now", lang))}
-              </button>
-            </form>
-          </div>
-        </div>
-        <div class="card-body">
-          <p class="d-flex align-items-center gap-2 mb-3">
-            <i class="bi {state_icon}" aria-hidden="true"></i><span>{esc(state_text)}</span>
-          </p>
-          <dl class="row mb-0 small">
-            <dt class="col-4 text-secondary fw-normal">{esc(translate("cron.next_run", lang))}</dt>
-            <dd class="col-8 text-end font-monospace text-nowrap">{esc(format_timestamp(cron.get("nextRunAt")))}</dd>
-            <dt class="col-4 text-secondary fw-normal">{esc(translate("cron.total_renewals", lang))}</dt>
-            <dd class="col-8 text-end font-monospace">{esc(cron.get("totalRenewals", 0))}</dd>
-            <dt class="col-4 text-secondary fw-normal mt-2">{esc(translate("cron.last_result", lang))}</dt>
-            <dd class="col-8 text-end font-monospace small mb-0 mt-2 {'text-danger' if failed else ''}">
-              {esc(translate("cron.result_line", lang,
-                             inspected=last.get("totalInspected", 0),
-                             refreshed=last.get("refreshedCount", 0),
-                             duration=last.get("durationMs", 0))
-                   if last else translate("cron.no_runs", lang))}
-              {esc(last.get("error") or "")}
-            </dd>
-          </dl>
-        </div>
-      </div>"""
-
-
-def render_gateway_card(gateway: Dict[str, Any], db_path: str, lang: str) -> str:
-    online = bool(gateway.get("online"))
-    tone = "text-success" if online else "text-danger"
-    icon = "bi-plug-fill" if online else "bi-plug"
-    label = (
-        f'ONLINE (HTTP {esc(gateway.get("statusCode", "—"))})'
-        if online
-        else f'{esc(translate("gateway.offline", lang))} — '
-             f'{esc(gateway.get("error") or translate("gateway.no_response", lang))}'
-    )
-
-    # Le a bandeira; o resumo textual nunca serve como booleano.
-    db_ok = bool(gateway.get("dbOk"))
-    if online and db_ok:
-        diagnosis = translate("gateway.diag_ok", lang)
-    elif online:
-        diagnosis = translate("gateway.diag_db_failed", lang)
-    else:
-        diagnosis = translate("gateway.diag_gateway_failed", lang)
-
-    return f"""
-      <div class="card h-100">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <span class="d-inline-flex align-items-center gap-2">
-            <i class="bi bi-hdd-network" aria-hidden="true"></i>{esc(translate("gateway.title", lang))}
-          </span>
-          <form method="post" action="/acoes/testar-gateway" class="m-0">
-            <button class="btn btn-outline-light btn-sm" type="submit">
-              <i class="bi bi-activity me-1" aria-hidden="true"></i>{esc(translate("action.test_connection", lang))}
-            </button>
-          </form>
-        </div>
-        <div class="card-body">
-          <dl class="row mb-0 small">
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.gateway", lang))}</dt>
-            <dd class="col-7 text-end font-monospace text-truncate">{esc(gateway.get("url") or "—")}</dd>
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.status", lang))}</dt>
-            <dd class="col-7 text-end font-monospace {tone}">
-              <i class="bi {icon} me-1" aria-hidden="true"></i>{label}
-            </dd>
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.latency", lang))}</dt>
-            <dd class="col-7 text-end font-monospace">{esc(gateway.get("latencyMs", "—"))} ms</dd>
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.database", lang))}</dt>
-            <dd class="col-7 text-end font-monospace text-truncate" title="{esc(db_path)}">
-              {esc(translate("gateway.db_summary", lang,
-                            connections=gateway.get("dbConnections", 0),
-                            combos=gateway.get("dbCombos", 0))
-                   if db_ok else translate("gateway.db_missing", lang))}
-            </dd>
-            <dt class="col-5 text-secondary fw-normal">{esc(translate("gateway.diagnostics", lang))}</dt>
-            <dd class="col-7 text-end font-monospace mb-0 {tone}">{esc(diagnosis)}</dd>
-          </dl>
-        </div>
-      </div>"""
-
-
-def render_flash(flash: Optional[Dict[str, str]]) -> str:
-    if not flash:
-        return ""
-    tone = flash.get("tone", "info")
-    icon = {
-        "success": "bi-check-circle-fill",
-        "danger": "bi-exclamation-octagon-fill",
-        "warning": "bi-exclamation-triangle-fill",
-        "info": "bi-info-circle-fill",
-    }.get(tone, "bi-info-circle-fill")
-    return f"""
-      <div class="alert alert-{esc(tone)} d-flex align-items-center gap-2" role="status" data-aviso>
-        <i class="bi {icon}" aria-hidden="true"></i>
-        <div>{esc(flash.get("message", ""))}</div>
-      </div>"""
-
-
-def campo_de_texto(
-    nome: str, rotulo: str, valor: str, ajuda: str = "", tipo: str = "text",
-    travado: bool = False, marcador: str = "",
-) -> str:
-    """Um campo do formulario de SSO, com rotulo traduzido e ajuda opcional."""
-    dica = f'<div class="form-text">{esc(ajuda)}</div>' if ajuda else ""
-    return f"""
-            <div class="mb-3">
-              <label class="form-label small" for="sso_{esc(nome)}">{esc(rotulo)}</label>
-              <input class="form-control" id="sso_{esc(nome)}" name="{esc(nome)}"
-                     type="{esc(tipo)}" value="{esc(valor)}" placeholder="{esc(marcador)}"
-                     autocomplete="off"{' disabled' if travado else ''}>
-              {dica}
-            </div>"""
+          </form>"""
 
 
 def render_dashboard(
     *,
-    connections: List[Any],
-    combos: List[Dict[str, Any]],
-    cron: Dict[str, Any],
-    # Chaves virtuais e modelos entraram depois dos outros cartoes e sao
-    # opcionais na assinatura: quem chama sem eles (um teste antigo, um script)
-    # continua desenhando a pagina, com os dois cartoes no estado vazio.
+    # Os seis cartoes, na ordem do contrato. Todos opcionais na assinatura: quem
+    # chama sem um deles -- um teste, um script -- continua desenhando a pagina,
+    # com o cartao no estado vazio, que e o comportamento correto.
+    connections: Optional[List[Any]] = None,
+    combos: Optional[List[Dict[str, Any]]] = None,
     keys: Optional[List[Any]] = None,
     models: Optional[List[Any]] = None,
-    gateway: Dict[str, Any],
-    db_path: str,
-    router_url: str,
-    current_user: str,
-    is_default_password: bool,
-    refresh_margin: int,
+    cron: Optional[Dict[str, Any]] = None,
+    gateway: Optional[Dict[str, Any]] = None,
+    db_path: str = "",
+    router_url: str = "",
+    current_user: str = "",
+    is_default_password: bool = False,
+    refresh_margin: int = 900,
     auth_from_env: bool = False,
     flash: Optional[Dict[str, str]] = None,
     lang: str = DEFAULT_LANGUAGE,
-    # Entrada federada. Opcional na assinatura pelo mesmo motivo de `keys` e
-    # `models`: quem chama sem eles -- um teste antigo, um script -- continua
-    # desenhando a pagina, com o SSO desligado.
+    # A query da requisicao, de onde sai a pagina de cada grid (`?pag_modelos=2`).
+    # Ausente, todo grid abre na primeira pagina -- que e o que acontece hoje,
+    # enquanto `web.py` ainda nao repassa a query.
+    consulta: Optional[Dict[str, List[str]]] = None,
+    # Estado que so um dos gateways produz. Chega por nome para que a MESMA
+    # assinatura sirva aos tres `web.py`; o que este painel nao usa fica em
+    # branco e nao aparece na tela.
+    models_state: str = "ok",
+    model_states: Optional[Dict[str, str]] = None,
+    team_aliases: Optional[Dict[str, str]] = None,
+    findings: Optional[List[Dict[str, Any]]] = None,
+    counters: Optional[Dict[str, Any]] = None,
+    # `proxy` e a grafia com que o `web.py` de um dos irmaos chama o gateway. As
+    # duas apontam para o mesmo estado, e a segunda sai quando `web.py` convergir.
+    proxy: Optional[Dict[str, Any]] = None,
+    # Estado do SSO para a tela de configuracao, nas tres grafias que os
+    # `web.py` ainda usam. Todas opcionais: sem nenhuma, o modal aparece no
+    # estado desligado, que e o correto de um painel sem SSO configurado.
+    sso_view: Optional[Dict[str, Any]] = None,
+    sso: Any = None,
     sso_config: Optional[Dict[str, str]] = None,
     sso_tem_segredo: bool = False,
     sso_segredo_do_ambiente: bool = False,
@@ -1286,11 +1464,19 @@ def render_dashboard(
 ) -> str:
     """Monta a página completa do dashboard, já com todos os dados embutidos."""
     lang = normalize_language(lang)
+    connections = connections or []
+    combos = combos or []
     keys = keys or []
     models = models or []
+    cron = cron or {}
+    counters = counters or {}
+    findings = findings or []
+    model_states = model_states or {}
+    gateway = gateway or proxy or {}
+    router_url = router_url or gateway.get("url") or ""
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     oauth_count = sum(1 for c in connections if c.is_oauth)
     apikey_count = sum(1 for c in connections if c.has_api_key)
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     metrics = "".join([
         metric_card(translate("metric.total_connections", lang), len(connections), "bi-diagram-2", "text-info"),
@@ -1299,32 +1485,13 @@ def render_dashboard(
         metric_card(translate("metric.combos", lang), len(combos), "bi-diagram-3", "text-success"),
     ])
 
-    change_password_block = (
-        f"""
-          <div class="alert alert-secondary d-flex align-items-center gap-2 mb-0" role="note">
-            <i class="bi bi-lock-fill" aria-hidden="true"></i>
-            <div>{translate("auth.env_managed", lang)}</div>
-          </div>"""
-        if auth_from_env
-        else f"""
-          <form method="post" action="/acoes/credenciais">
-            <div class="mb-3">
-              <label class="form-label" for="novoUsuario">{esc(translate("auth.user", lang))}</label>
-              <input class="form-control" id="novoUsuario" name="user" autocomplete="username" required>
-            </div>
-            <div class="mb-3">
-              <label class="form-label" for="novaSenha">{esc(translate("auth.new_password", lang))}</label>
-              <input type="password" class="form-control" id="novaSenha" name="password"
-                     minlength="6" autocomplete="new-password" required
-                     pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{{6,}}"
-                     title="{esc(translate("password.policy", lang))}">
-              <div class="form-text">{esc(translate("password.policy", lang))}</div>
-            </div>
-            <button class="btn btn-primary w-100" type="submit">
-              <i class="bi bi-save me-1" aria-hidden="true"></i>{esc(translate("action.save_credentials", lang))}
-            </button>
-          </form>"""
-    )
+    tabela_de_conexoes = render_connections_table(connections, refresh_margin, lang, consulta)
+    tabela_de_chaves = render_keys_table(keys, lang, consulta)
+    tabela_de_modelos = render_models_table(models, lang, models_state, consulta)
+    tabela_de_combos = render_combos_table(combos, lang, consulta)
+    corpo_do_sso = render_sso_modal(sso_config or {}, lang, sso_tem_segredo,
+                                    sso_segredo_do_ambiente, sso_desligado_pelo_ambiente,
+                                    sso_endereco_de_retorno)
 
     return f"""<!DOCTYPE html>
 <html lang="{esc(lang)}" data-bs-theme="dark">
@@ -1343,9 +1510,9 @@ def render_dashboard(
   <style>
     /* ------------------------------------------------------------------
        Identidade visual: os tres paineis da familia RTKSync tem a MESMA
-       estrutura e a MESMA folha de estilo. O que muda e o valor destes
-       tokens -- roxo profundo.
-       Trocar o produto e trocar estas oito linhas, nada mais.
+       estrutura e a MESMA folha de estilo. O que muda e o valor dos nove
+       papeis cromaticos, e eles vivem todos em identidade.py.
+       Trocar o produto e trocar aquele arquivo, nada mais.
        ------------------------------------------------------------------ */
     :root {{
 {tokens_do_tema()}
@@ -1367,6 +1534,7 @@ def render_dashboard(
                    background: color-mix(in srgb, var(--brand-b) 22%, transparent);
                    border: 1px solid color-mix(in srgb, var(--brand-b) 45%, transparent);
                    color: #fff; font-size: 1.15rem; }}
+    .list-group-item {{ background: var(--surface); color: var(--text); border-color: var(--line); }}
     .accordion-item, .accordion-button {{ background: var(--surface); color: var(--text); }}
     .accordion-button:not(.collapsed) {{ background: var(--surface-2); color: #fff; box-shadow: none; }}
     .cron-log {{ white-space: pre-wrap; word-break: break-word; font-size: .8rem; color: var(--text-dim);
@@ -1380,11 +1548,28 @@ def render_dashboard(
                     --bs-btn-color: var(--bg); --bs-btn-hover-color: var(--bg); --bs-btn-active-color: var(--bg); }}
     a {{ color: var(--accent-2); }}
     a:hover {{ color: var(--accent); }}
-    /* Abas do modal de SSO. Pintadas com os tokens que ja existem, e nunca com
-       tokens novos: um token a mais aqui seria um componente que so este painel
-       sabe desenhar, e a simetria entre os tres acabaria nele. */
-    .nav-sso .nav-link {{ color: var(--text-dim); }}
-    .nav-sso .nav-link.active {{ background: var(--accent); color: var(--bg); }}
+    /* Abas do modal de acesso federado: pintadas com os tokens que ja existem, e
+       nunca com tokens novos -- um token a mais aqui seria um componente que so
+       um painel sabe desenhar. O Bootstrap deixa a aba inativa quase invisivel
+       sobre superficie escura, e a ativa com a borda da propria pagina. */
+    .nav-tabs {{ border-bottom-color: var(--line); }}
+    .nav-tabs .nav-link {{ color: var(--text-dim); }}
+    .nav-tabs .nav-link.active {{ background: var(--surface-2); color: var(--text);
+                                  border-color: var(--line) var(--line) var(--surface-2); }}
+    .form-control, .form-control:focus {{ background: var(--bg); color: var(--text);
+                                          border-color: var(--line); box-shadow: none; }}
+    /* Barra de paginas de cada grid. O Bootstrap desenha a paginacao clara, que
+       sobre a superficie escura do painel fica ilegivel. */
+    .barra-paginas {{ border-top: 1px solid var(--line); }}
+    .pagination {{ --bs-pagination-bg: var(--surface); --bs-pagination-color: var(--accent-2);
+                   --bs-pagination-border-color: var(--line);
+                   --bs-pagination-hover-bg: var(--surface-2); --bs-pagination-hover-color: var(--accent);
+                   --bs-pagination-hover-border-color: var(--line);
+                   --bs-pagination-focus-bg: var(--surface-2); --bs-pagination-focus-color: var(--accent);
+                   --bs-pagination-active-bg: var(--accent); --bs-pagination-active-border-color: var(--accent);
+                   --bs-pagination-active-color: var(--bg);
+                   --bs-pagination-disabled-bg: var(--surface); --bs-pagination-disabled-color: var(--text-dim);
+                   --bs-pagination-disabled-border-color: var(--line); }}
     /* Barra de acoes do cabecalho: todos os controles com a MESMA altura. O
        seletor de idioma carrega so a bandeira, um elemento com altura propria;
        sem texto ao lado para definir a linha, ele esticava o botao. */
@@ -1393,12 +1578,11 @@ def render_dashboard(
     .barra-acoes .btn {{ height: 2rem; padding-top: 0; padding-bottom: 0;
                          display: inline-flex; align-items: center; line-height: 1; }}
     .barra-acoes .fi {{ line-height: 1; }}
-    /* A tabela de conexoes tem sete colunas, e sem largura declarada o
-       navegador as reparte pelo conteudo: o diagnostico -- a coluna com a frase
-       mais longa -- recebia a menor fatia e quebrava em quatro linhas, enquanto
-       "Tipo" e "Status", de largura fixa, sobravam espaco. Declarar a divisao
-       resolve na origem, e `table-layout: fixed` faz o navegador respeita-la em
-       vez de recalcular pelo conteudo. */
+    /* A tabela de dominio tem sete colunas, e sem largura declarada o navegador
+       as reparte pelo conteudo: a coluna com a frase mais longa recebia a menor
+       fatia e quebrava em quatro linhas, enquanto "Tipo" e "Status", de largura
+       fixa, sobravam espaco. Declarar a divisao resolve na origem, e
+       `table-layout: fixed` faz o navegador respeita-la em vez de recalcular. */
     .tabela-dominio {{ table-layout: fixed; }}
     .tabela-dominio th, .tabela-dominio td {{ padding: .6rem .5rem; vertical-align: top; }}
     /* Com table-layout:fixed a largura da coluna e lei, e text-nowrap
@@ -1467,6 +1651,9 @@ def render_dashboard(
     <div class="row g-3 mb-4">{metrics}
     </div>
 
+    <!-- Os seis cartoes, na ordem acordada para os tres paineis:
+         1 conexao com o gateway - 2 agendador - 3 conexoes monitoradas
+         4 chaves virtuais - 5 modelos cadastrados - 6 combos de resiliencia -->
     <div class="row g-3 mb-4">
       <div class="col-lg-6">{render_gateway_card(gateway, db_path, lang)}</div>
       <div class="col-lg-6">{render_cron_card(cron, lang)}</div>
@@ -1479,7 +1666,7 @@ def render_dashboard(
         </span>
         <span class="badge text-bg-dark">{len(connections)}</span>
       </div>
-      {render_connections_table(connections, refresh_margin, lang)}
+      {tabela_de_conexoes}
     </div>
 
     <div class="card mb-4">
@@ -1489,7 +1676,7 @@ def render_dashboard(
         </span>
         <span class="badge text-bg-dark">{len(keys)}</span>
       </div>
-      {render_keys_table(keys, lang)}
+      {tabela_de_chaves}
     </div>
 
     <div class="card mb-4">
@@ -1499,7 +1686,7 @@ def render_dashboard(
         </span>
         <span class="badge text-bg-dark">{len(models)}</span>
       </div>
-      {render_models_table(models, lang)}
+      {tabela_de_modelos}
     </div>
 
     <div class="card mb-4">
@@ -1509,7 +1696,7 @@ def render_dashboard(
         </span>
         <span class="badge text-bg-dark">{len(combos)}</span>
       </div>
-      {render_combos_table(combos, lang)}
+      {tabela_de_combos}
     </div>
 
     <footer class="d-flex flex-wrap justify-content-between gap-2 text-secondary small pb-3">
@@ -1524,6 +1711,13 @@ def render_dashboard(
       <span>
         <i class="bi bi-clock-history me-1" aria-hidden="true"></i>{esc(translate("footer.generated", lang))}
         <span class="font-monospace">{esc(generated_at)}</span>
+      </span>
+      <!-- Assinatura da casa, igual nos tres paineis e fora do catalogo de
+           traducao: e um nome proprio, nao um texto de interface. O ano vem do
+           relogio -- um ano escrito a mao envelhece em silencio. -->
+      <span class="w-100 text-center pt-2">
+        Feito com <i class="bi bi-heart-fill" style="color: var(--bs-purple)" aria-hidden="true"></i>
+        pela Pathbit - All rights reserved (c) {datetime.now().year}
       </span>
     </footer>
   </div>
@@ -1544,6 +1738,22 @@ def render_dashboard(
     </div>
   </div>
 
+  <div class="modal fade" id="modalSSO" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h6 d-inline-flex align-items-center gap-2">
+            <i class="bi bi-shield-check" aria-hidden="true"></i>{esc(translate("sso.title", lang))}
+          </h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"
+                  aria-label="{esc(translate("action.close", lang))}"></button>
+        </div>
+        <div class="modal-body">{corpo_do_sso}
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="modalCredenciais" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -1554,13 +1764,11 @@ def render_dashboard(
           <button type="button" class="btn-close" data-bs-dismiss="modal"
                   aria-label="{esc(translate("action.close", lang))}"></button>
         </div>
-        <div class="modal-body">{change_password_block}
+        <div class="modal-body">{render_credentials_modal(auth_from_env, lang)}
         </div>
       </div>
     </div>
   </div>
-{render_sso_modal(sso_config or {}, lang, sso_tem_segredo, sso_segredo_do_ambiente,
-                  sso_desligado_pelo_ambiente, sso_endereco_de_retorno)}
 
   <script src="{JQUERY_JS}"></script>
   <script src="{BOOTSTRAP_JS}"></script>

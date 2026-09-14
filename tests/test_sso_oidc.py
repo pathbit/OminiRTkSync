@@ -6,7 +6,7 @@ verificação some num refactor sem ninguém notar. Cada teste aqui vira UMA
 verificação do avesso e cobra a recusa.
 
 O provedor de identidade é falso e vive dentro do processo (`ProvedorFalso`
-substitui `sso._http_json`, a única saída de rede do módulo). Nada aqui toca a
+substitui `sso._pedir`, a única saída de rede do módulo). Nada aqui toca a
 internet, e é justamente isso que permite testar o que um provedor real nunca
 produziria de propósito: `state` trocado, `aud` errada, `iat` no futuro,
 `email_verified` falso, código reapresentado.
@@ -19,7 +19,11 @@ O que cada grupo protege:
 - **TestRecusas**          treze entradas ruins, uma por verificação;
 - **TestDesligado**        sem configuração o painel é o de antes, byte a byte;
 - **TestConfiguracao**     quem grava a configuração prova a senha local, e o
-                           segredo nunca volta para a tela.
+                           segredo nunca volta para a tela;
+- **PendentesDoSaml**      o conjunto que dá sentido ao `InResponseTo` e o
+                           cache que impede a mesma asserção de valer duas vezes;
+- **EnderecosDoSaml**      tudo o que o IdP recebe sai de `sso.base_url`, e
+                           nunca do cabeçalho `Host`.
 """
 
 import base64
@@ -31,6 +35,8 @@ import sqlite3
 import tempfile
 import time
 import unittest
+import urllib.parse
+import zlib
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -72,7 +78,7 @@ def id_token_falso(payload: Dict[str, Any]) -> str:
 
 
 class ProvedorFalso:
-    """Provedor de identidade em memória, no lugar de `sso._http_json`."""
+    """Provedor de identidade em memória, no lugar de `sso._pedir`."""
 
     def __init__(self):
         self.documento = dict(DOCUMENTO)
@@ -215,10 +221,10 @@ class BaseDeSSO(unittest.TestCase):
             protecao._falhas.clear()
             protecao._desafios.clear()
         with sso._trava:
-            sso._cache_de_descoberta.clear()
+            sso._descobertas.clear()
             sso._estados_consumidos.clear()
 
-        self.http_real = sso._http_json
+        self.pedir_de_verdade = sso._pedir
         self.novo_provedor()
 
         sso.grava_client_secret(self.arquivo_do_segredo, SEGREDO_DO_CLIENTE)
@@ -233,13 +239,13 @@ class BaseDeSSO(unittest.TestCase):
         tipo de defeito que só aparece quando a ordem dos testes muda.
         """
         self.provedor = ProvedorFalso()
-        sso._http_json = self.provedor
+        sso._pedir = self.provedor
         with sso._trava:
-            sso._cache_de_descoberta.clear()
+            sso._descobertas.clear()
             sso._estados_consumidos.clear()
 
     def tearDown(self):
-        sso._http_json = self.http_real
+        sso._pedir = self.pedir_de_verdade
         for nome, valor in self.ambiente_salvo.items():
             if valor is None:
                 os.environ.pop(nome, None)
@@ -808,6 +814,130 @@ class TestConfiguracao(BaseDeSSO):
             corpo.index("#modalSSO"), corpo.index('action="/logout"'),
             "o botão de configurações entra ANTES de Sair",
         )
+
+
+
+
+# --------------------------------------------------------------------------
+# SAML2: o que é NOSSO no protocolo
+# --------------------------------------------------------------------------
+#
+# A validação da asserção (assinatura XML, `Audience`, `NotOnOrAfter`, defesa
+# contra XML Signature Wrapping) é da `python3-saml`, que NÃO está instalada
+# nesta imagem -- por isso o teste que dependeria dela pula em vez de
+# reprovar. O que é nosso, e está testado aqui: o conjunto de pendentes que
+# dá sentido ao `InResponseTo`, o cache de repetição da asserção, a
+# AuthnRequest montada a partir de `sso.base_url` e o dicionário de
+# configuração que tira da biblioteca o direito de montar o endereço do ACS
+# a partir do cabeçalho `Host`.
+#
+# As rotas `/sso/saml/*` ainda não existem no `web.py` deste painel, e por
+# isso `sso.provedor_ativo` continua recusando o provedor: rota que existe e
+# sempre recusa é pior que rota que não existe.
+
+
+class PendentesDoSaml(unittest.TestCase):
+    """O conjunto de pendentes é o que dá sentido ao `InResponseTo`."""
+
+    def setUp(self):
+        sso.esquece_estado_de_fluxo()
+
+    def test_o_que_foi_registrado_e_consumido_uma_vez_so(self):
+        sso.registra_pendente("_abc")
+        self.assertTrue(sso.consome_pendente("_abc"))
+        self.assertFalse(sso.consome_pendente("_abc"))
+
+    def test_id_que_ninguem_registrou_nao_passa(self):
+        self.assertFalse(sso.consome_pendente("_inventado"))
+
+    def test_pendente_fora_do_prazo_nao_passa(self):
+        sso.registra_pendente("_velho", agora=1000)
+        self.assertFalse(
+            sso.consome_pendente("_velho", agora=1000 + sso.VALIDADE_DO_PENDENTE + 1)
+        )
+
+    def test_o_conjunto_tem_teto_e_descarta_o_mais_antigo(self):
+        """A rota é pública: sem teto, ela vira consumo de memória ilimitado."""
+        for numero in range(sso.LIMITE_DE_PENDENTES + 10):
+            sso.registra_pendente(f"_{numero}", agora=1000 + numero)
+        self.assertLessEqual(len(sso._pendentes), sso.LIMITE_DE_PENDENTES)
+        self.assertFalse(sso.consome_pendente("_0", agora=1000))
+
+    def test_a_mesma_assercao_nao_vale_duas_vezes(self):
+        self.assertFalse(sso.assercao_ja_usada("id-da-assercao"))
+        self.assertTrue(sso.assercao_ja_usada("id-da-assercao"))
+
+    def test_resposta_sem_in_response_to_e_recusada(self):
+        """Fluxo iniciado pelo IdP é o vetor clássico de CSRF de login."""
+        xml = b'<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"/>'
+        with self.assertRaises(sso.FalhaDeSSO):
+            sso.in_response_to(base64.b64encode(xml).decode())
+
+    def test_o_in_response_to_e_lido_da_resposta(self):
+        xml = b'<samlp:Response InResponseTo="_pendente-1"/>'
+        self.assertEqual(sso.in_response_to(base64.b64encode(xml).decode()), "_pendente-1")
+
+
+class EnderecosDoSaml(unittest.TestCase):
+    """Tudo sai de `sso.base_url`, e nada do cabeçalho `Host`."""
+
+    def setUp(self):
+        self.config = sso.ConfiguracaoSSO(
+            provedor="saml", base_url="https://painel.exemplo.com",
+            idp_entity_id="https://idp.exemplo.com/metadata",
+            idp_sso_url="https://idp.exemplo.com/sso",
+            idp_cert="MIIC-de-mentira", dominios=("empresa.com",),
+        )
+
+    def test_a_authn_request_aponta_para_o_acs_da_configuracao(self):
+        xml = sso.monta_authn_request(self.config, "_id", agora=1_700_000_000)
+        self.assertIn('AssertionConsumerServiceURL="https://painel.exemplo.com/sso/saml/acs"', xml)
+        self.assertIn('Destination="https://idp.exemplo.com/sso"', xml)
+        self.assertIn("<saml:Issuer>https://painel.exemplo.com/sso/saml/metadata</saml:Issuer>", xml)
+
+    def test_o_binding_de_ida_e_por_redirecionamento(self):
+        """HTTP-POST binding bateria na CSP `form-action 'self'` e seria bloqueado."""
+        xml = sso.monta_authn_request(self.config, "_id", agora=1_700_000_000)
+        destino = sso.url_de_ida_saml(self.config, xml)
+        self.assertTrue(destino.startswith("https://idp.exemplo.com/sso?SAMLRequest="))
+        parametro = urllib.parse.parse_qs(urllib.parse.urlsplit(destino).query)["SAMLRequest"][0]
+        recuperado = zlib.decompress(base64.b64decode(parametro), -zlib.MAX_WBITS).decode("utf-8")
+        self.assertEqual(recuperado, xml)
+
+    def test_a_biblioteca_recebe_o_destino_da_configuracao_e_nao_da_requisicao(self):
+        """O default da `python3-saml` monta a URL do ACS a partir do `http_host`."""
+        ajustes = sso.configuracao_da_biblioteca(self.config)
+        self.assertTrue(ajustes["strict"])
+        self.assertTrue(ajustes["security"]["wantAssertionsSigned"])
+        self.assertTrue(ajustes["security"]["wantMessagesSigned"])
+        self.assertTrue(ajustes["security"]["rejectUnsolicitedResponsesWithInResponseTo"])
+        self.assertEqual(
+            ajustes["sp"]["assertionConsumerService"]["url"],
+            "https://painel.exemplo.com/sso/saml/acs",
+        )
+        dados = sso.dados_da_requisicao(self.config, {"SAMLResponse": "x"})
+        self.assertEqual(dados["http_host"], "painel.exemplo.com")
+        self.assertEqual(dados["https"], "on")
+
+    def test_a_porta_viaja_dentro_do_host_e_nao_num_campo_proprio(self):
+        """O campo separado, vazio, montava "https://host:/sso/saml/acs".
+
+        Com dois-pontos e sem número — e a biblioteca recusava a própria
+        asserção correta dizendo que o destino não batia. Encontrado na bancada,
+        com asserção assinada de verdade; preso aqui para que o defeito não
+        volte numa máquina onde a biblioteca nem está instalada.
+        """
+        com_porta = sso.ConfiguracaoSSO(base_url="http://127.0.0.1:9093")
+        dados = sso.dados_da_requisicao(com_porta, {})
+        self.assertEqual(dados["http_host"], "127.0.0.1:9093")
+        self.assertEqual(dados["https"], "off")
+        self.assertNotIn("server_port", dados)
+
+    def test_sem_a_biblioteca_o_painel_recusa_em_vez_de_quebrar(self):
+        if sso.saml_disponivel():
+            self.skipTest("a biblioteca está instalada nesta máquina")
+        with self.assertRaises(sso.FalhaDeSSO):
+            sso.processa_resposta_saml(self.config, "qualquer-coisa", "_id")
 
 
 if __name__ == "__main__":

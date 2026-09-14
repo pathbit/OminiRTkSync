@@ -167,13 +167,24 @@ class ModelosCadastradosNaTela(unittest.TestCase):
     def test_modelo_orfao_nao_alega_saude_que_ninguem_mediu(self):
         self.assertEqual(self._modelo().health_status, "not_checked")
 
-    def test_catalogo_grande_e_truncado_com_o_total_declarado(self):
-        """Truncar em silencio mentiria sobre o tamanho do catalogo."""
-        muitos = [self._modelo(id=f"m-{i}") for i in range(render.MAX_LINHAS_DE_MODELO + 25)]
+    def test_catalogo_grande_vem_paginado_de_dez_em_dez(self):
+        """Paginar substituiu o corte fixo em 150 linhas.
+
+        Truncar em silencio mentia sobre o tamanho do catalogo, e truncar
+        avisando ("mostrando 150 de 550") deixava as outras 400 linhas
+        inalcancaveis. Dez por pagina mostra menos e nao esconde nada.
+        """
+        muitos = [self._modelo(id=f"m-{i}") for i in range(25)]
         html = render.render_models_table(muitos, "pt")
-        self.assertIn(f"detalhe-modelo-{render.MAX_LINHAS_DE_MODELO - 1}", html)
-        self.assertNotIn(f"detalhe-modelo-{render.MAX_LINHAS_DE_MODELO}", html)
-        self.assertIn(str(len(muitos)), html)
+        self.assertIn("detalhe-modelo-9", html)
+        self.assertNotIn("detalhe-modelo-10", html)
+        self.assertIn("pag_modelos=2", html, "a barra leva a pagina seguinte")
+
+    def test_a_ultima_pagina_do_catalogo_traz_o_resto(self):
+        muitos = [self._modelo(id=f"m-{i}") for i in range(25)]
+        html = render.render_models_table(muitos, "pt", consulta={"pag_modelos": ["3"]})
+        self.assertIn("detalhe-modelo-4", html)
+        self.assertNotIn("detalhe-modelo-5", html)
 
 
 class ONadaDeSegredoNaTela(unittest.TestCase):

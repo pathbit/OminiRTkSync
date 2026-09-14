@@ -165,7 +165,7 @@ class TestQuietHandleError(unittest.TestCase):
         self.assertTrue(handler.close_connection)
 
 
-class TestRouterProbeCache(unittest.TestCase):
+class TestGatewayProbeCache(unittest.TestCase):
     """A sondagem ao gateway não pode acontecer a cada probe: ela faz I/O de rede de até 3s."""
 
     def setUp(self):
@@ -179,7 +179,7 @@ class TestRouterProbeCache(unittest.TestCase):
         calls = self.calls
 
         class FakeHandler(web_server.DashboardHandler):
-            omniroute_url = url
+            router_url = url
 
             def __init__(self):  # não instancia socket: só exercita probe_gateway
                 pass
@@ -226,7 +226,7 @@ class TestRouterProbeCache(unittest.TestCase):
         handler.probe_gateway()
         self.assertEqual(len(self.calls), 2)
 
-    def test_no_router_url_means_no_network_call(self):
+    def test_no_gateway_url_means_no_network_call(self):
         handler = self._handler_with_fake_probe("")
         self.assertTrue(handler.probe_gateway())
         self.assertEqual(len(self.calls), 0)
