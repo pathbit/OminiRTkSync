@@ -12,6 +12,10 @@ authors = [
 ]
 license = { text = "MIT" }
 requires-python = ">=3.10"
+dependencies = [
+    # AES-256-GCM para decifrar/cifrar o armazenamento enc:v1 do OmniRoute.
+    "pycryptodome==3.23.0",
+]
 keywords = ["omniroute", "oauth", "token-sync", "llm", "antigravity", "claude-code"]
 classifiers = [
     "Programming Language :: Python :: 3",

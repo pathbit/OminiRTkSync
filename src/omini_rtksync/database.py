@@ -7,6 +7,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .enc_v1 import decrypt_if_needed, encrypt
+
 
 def get_db_connection(db_path: str) -> sqlite3.Connection:
     if not os.path.exists(db_path):
@@ -123,6 +125,13 @@ def get_all_connections(db_path: str) -> List[Dict[str, Any]]:
                 extra.get("providerSpecificData")
             )
 
+            # Credenciais em repouso são cifradas pelo OmniRoute (enc:v1). A
+            # leitura decifra com a chave de ambiente; o que não decifra volta
+            # intacto, e nenhum caminho joga o material em log.
+            access_token = decrypt_if_needed(access_token) if access_token else access_token
+            refresh_token = decrypt_if_needed(refresh_token) if refresh_token else refresh_token
+            api_key = decrypt_if_needed(api_key) if api_key else api_key
+
             result.append({
                 "id": str(item["id"]),
                 "provider": provider,
@@ -209,6 +218,10 @@ def update_connection(
     conn = get_db_connection(db_path)
     tbl = detect_connection_table(conn)
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # A escrita volta cifrada no mesmo formato do OmniRoute (enc:v1) quando a
+    # chave está presente; sem ela, passthrough em claro, como o gateway faz.
+    access_token = encrypt(access_token)
+    refresh_token = encrypt(refresh_token)
     try:
         cursor = conn.cursor()
         cursor.execute(f"PRAGMA table_info({tbl})")
