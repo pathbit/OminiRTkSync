@@ -1,4 +1,4 @@
-name: egress-test
+name: ominirtk-egress
 
 # Bancada para testar POR ONDE o trafego sai.
 #
@@ -21,36 +21,44 @@ services:
   # se o vinculo por conta realmente separa as saidas.
   proxy-a:
     image: ubuntu/squid:latest
-    container_name: egress-proxy-a
+    container_name: ominirtk-proxy-a
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18081:3128"
+      - "127.0.0.1:18091:3128"
     networks:
       egress:
-        ipv4_address: 172.31.0.11
+        ipv4_address: 172.32.0.11
     healthcheck:
       # O que importa e a porta aceitar conexao: squidclient nao existe nesta
       # imagem, e um healthcheck que depende de binario ausente fica eternamente
       # "starting" sem que nada esteja errado.
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/3128' 2>/dev/null || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 2 bash -c '</dev/tcp/127.0.0.1/3128' 2>/dev/null || exit 1",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
 
   proxy-b:
     image: ubuntu/squid:latest
-    container_name: egress-proxy-b
+    container_name: ominirtk-proxy-b
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18082:3128"
+      - "127.0.0.1:18092:3128"
     networks:
       egress:
-        ipv4_address: 172.31.0.12
+        ipv4_address: 172.32.0.12
     healthcheck:
       # O que importa e a porta aceitar conexao: squidclient nao existe nesta
       # imagem, e um healthcheck que depende de binario ausente fica eternamente
       # "starting" sem que nada esteja errado.
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/3128' 2>/dev/null || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 2 bash -c '</dev/tcp/127.0.0.1/3128' 2>/dev/null || exit 1",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -60,13 +68,13 @@ services:
   # direto da maquina.
   echo:
     image: python:3.12-alpine
-    container_name: egress-echo
+    container_name: ominirtk-echo
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:18090:8080"
     networks:
       egress:
-        ipv4_address: 172.31.0.20
+        ipv4_address: 172.32.0.20
     command:
       - python3
       - -c
@@ -93,13 +101,20 @@ services:
 
         ThreadingHTTPServer(("0.0.0.0", 8080), Echo).serve_forever()
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/',timeout=2)\""]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import urllib.request;urllib.request.urlopen(''http://127.0.0.1:8080/'',timeout=2)"',
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
 
 networks:
   egress:
+    # Nome declarado, e nao derivado do nome do projeto: sem isto a rede nasce
+    # como `ominirtk-egress_egress` e o endereco depende do diretorio.
+    name: ominirtk-egress-net
     ipam:
       config:
-        - subnet: 172.31.0.0/24
+        - subnet: 172.32.0.0/24

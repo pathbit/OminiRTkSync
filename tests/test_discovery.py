@@ -6,8 +6,8 @@ import shutil
 import tempfile
 import unittest
 
-from omini_rtksync.discovery import HostDiscoveryEngine
-from omini_rtksync.providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
+from omini_rtksync.gateway import HostDiscoveryEngine
+from omini_rtksync.gateway import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
 
 
 class TestOminiDiscovery(unittest.TestCase):

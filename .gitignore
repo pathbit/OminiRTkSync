@@ -1231,6 +1231,9 @@ temp/
 # Credenciais do painel: o hash de recuperacao e a senha em texto herdada.
 .dashboard_recovery
 .dashboard_auth.json
+# Segredo do cliente OAuth da entrada federada. Mora no diretorio de dados
+# (modo 0600), mas em execucao local esse diretorio pode ser o proprio repo.
+.sso_client_secret
 # Log persistente: pode conter endereco, nome de conexao e mensagem de erro.
 *.log
 logs/

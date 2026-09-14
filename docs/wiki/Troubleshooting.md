@@ -10,11 +10,12 @@ Concrete symptoms, what they actually mean, and what to do.
 `REFRESH_MARGIN` (default 900 s = 15 min). A connection showing *24 min* remaining is correctly
 left alone — renewing early would burn refresh-token rotations for nothing.
 
-The dashboard states this per connection, in the **Renewal diagnosis** column:
+The dashboard states this per connection, in the details modal the **Details** button on the
+connections table opens:
 
 > Outside the 15 min margin: renewal expected in ~9 min
 
-**When it *is* a problem:** the diagnosis column says something else.
+**When it *is* a problem:** the diagnosis in that modal says something else.
 
 | Diagnosis | Meaning | Action |
 | :--- | :--- | :--- |
@@ -33,7 +34,7 @@ REFRESH_MARGIN=1800     # renew during the last 30 minutes
 ## `BrokenPipeError: [Errno 32] Broken pipe` in `serve_healthz`
 
 ```
-File "/app/src/omini_rtksync/web/server.py", line 116, in serve_healthz
+File "/app/src/omini_rtksync/web.py", line 236, in do_GET
     self.wfile.write(b"OK")
 BrokenPipeError: [Errno 32] Broken pipe
 ```
@@ -89,7 +90,7 @@ If the numbers still look wrong, the synchronizer may not be writing at all — 
 Sign in with user `admin` and the **recovery hash** as the password. Find it with:
 
 ```bash
-docker logs ominirtksync 2>&1 | grep "Recovery hash"
+docker logs ominirtk-sync 2>&1 | grep "Recovery hash"
 # or, if the log file is mounted:
 grep "Recovery hash" /app/data/logs/ominirtksync.log
 ```
@@ -97,7 +98,7 @@ grep "Recovery hash" /app/data/logs/ominirtksync.log
 If the log has already rotated past it, the value is on disk:
 
 ```bash
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 To pin your own instead of relying on the generated one, set `DASHBOARD_RECOVERY_HASH` and

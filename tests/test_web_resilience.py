@@ -38,7 +38,7 @@ class TestHealthzResilience(unittest.TestCase):
             dashboard_user="admin",
             dashboard_password="senha-de-teste",
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", 19391, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)
@@ -157,7 +157,7 @@ class TestQuietHandleError(unittest.TestCase):
             def write(self, _payload):
                 raise BrokenPipeError(32, "Broken pipe")
 
-        handler = web_server.OminiDashboardHandler.__new__(web_server.OminiDashboardHandler)
+        handler = web_server.DashboardHandler.__new__(web_server.DashboardHandler)
         handler.wfile = ExplodingWriter()
         handler.close_connection = False
 
@@ -165,7 +165,7 @@ class TestQuietHandleError(unittest.TestCase):
         self.assertTrue(handler.close_connection)
 
 
-class TestRouterProbeCache(unittest.TestCase):
+class TestGatewayProbeCache(unittest.TestCase):
     """A sondagem ao gateway não pode acontecer a cada probe: ela faz I/O de rede de até 3s."""
 
     def setUp(self):
@@ -178,8 +178,8 @@ class TestRouterProbeCache(unittest.TestCase):
     def _handler_with_fake_probe(self, url: str):
         calls = self.calls
 
-        class FakeHandler(web_server.OminiDashboardHandler):
-            omniroute_url = url
+        class FakeHandler(web_server.DashboardHandler):
+            router_url = url
 
             def __init__(self):  # não instancia socket: só exercita probe_gateway
                 pass
@@ -226,7 +226,7 @@ class TestRouterProbeCache(unittest.TestCase):
         handler.probe_gateway()
         self.assertEqual(len(self.calls), 2)
 
-    def test_no_router_url_means_no_network_call(self):
+    def test_no_gateway_url_means_no_network_call(self):
         handler = self._handler_with_fake_probe("")
         self.assertTrue(handler.probe_gateway())
         self.assertEqual(len(self.calls), 0)

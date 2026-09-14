@@ -1,7 +1,7 @@
-"""OminiRTKSync: OmniRoute Universal Token & Connection Sync.
+"""Sincronizador universal de tokens e conexoes de um gateway de IA.
 
-Specialized token keeper, health validator and auto-healer for OmniRoute AI Gateways
-(https://github.com/diegosouzapw/OmniRoute).
+Specialized token keeper, health validator and auto-healer for the AI gateway
+it is paired with.
 """
 
 __version__ = "1.0.0"

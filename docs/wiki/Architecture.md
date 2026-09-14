@@ -29,14 +29,11 @@ state the gateway keeps about its own connections.
 | Module | Responsibility |
 | :--- | :--- |
 | `cli.py` | Argument parsing, bootstrap of logging and the recovery hash, entry points. |
-| `daemon.py` | `SyncEngine.sync_all()` — one full pass over every connection. |
 | `cron.py` | Background scheduler; keeps per-cycle history with the actions each produced. |
-| `database.py` | SQLite reads and writes against `provider_connections` and `combos`. |
+| `identidade.py` | The only file that may differ from the sibling projects: name, colours, icon, ports, gateway. |
+| `gateway.py` | Everything this synchronizer knows about the gateway: SQLite reads and writes, host credential discovery, one handler per credential family (Google, generic OAuth, API key, local), `SyncEngine.sync_all()` — one full pass over every connection — and the fallback combos kept registered and up to date. |
 | `models.py` | `ConnectionRecord` and its derived properties (`is_oauth`, `is_local`, `remaining_seconds`, `health_status`). |
 | `normalizer.py` | Credential-format self-healing and stale-lock removal. |
-| `discovery.py` | Finds provider credentials on the host filesystem. |
-| `providers/` | One handler per credential family: Google, generic OAuth, API key, local. |
-| `combos.py` | Keeps the fallback combos registered and up to date. |
 | `web.py` | HTTP server, routing, actions. |
 | `render.py` | Server-side HTML rendering. |
 | `i18n.py`, `prefs.py` | Interface language and its SQLite persistence. |

@@ -25,8 +25,8 @@ from omini_rtksync.credential_check import (
     _classify,
     check_api_key,
 )
-from omini_rtksync.database import get_all_connections, update_connection_health
-from omini_rtksync.providers import ApiKeyProvider, LocalProvider
+from omini_rtksync.gateway import get_all_connections, update_connection_health
+from omini_rtksync.gateway import ApiKeyProvider, LocalProvider
 
 
 LOCAL = {
@@ -65,7 +65,7 @@ class TestVerificacaoNaoERenovacao(unittest.TestCase):
     def test_a_plain_validation_does_not_count_as_a_renewal(self):
         provider = ApiKeyProvider(validate_credentials=True)
         with unittest.mock.patch(
-            "omini_rtksync.providers.check_connection",
+            "omini_rtksync.gateway.check_connection",
             return_value=CheckResult(state=STATE_VALID, detail="ok", checked_at="2026-01-01T00:00:00Z"),
         ):
             renewed, data, _ = provider.check_and_refresh(dict(NUVEM))

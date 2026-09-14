@@ -62,7 +62,7 @@ class TestWebSecurity(unittest.TestCase):
             dashboard_user="admin",
             dashboard_password="senha-de-teste",
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", PORT, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)
@@ -230,7 +230,7 @@ class TestSecurityHeadersOnEveryResponse(unittest.TestCase):
             dashboard_password="senha-de-teste",
             validate_credentials=False,
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", cls.PORTA, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)

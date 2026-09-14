@@ -21,7 +21,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from omini_rtksync.database import update_connection, update_connection_health
+from omini_rtksync.gateway import update_connection, update_connection_health
 from omini_rtksync.models import ConnectionRecord
 from omini_rtksync.render import render_refresh_reason
 
@@ -325,11 +325,11 @@ class TestFraseDaSondagem(unittest.TestCase):
     def mensagens(self, estado, detalhe):
         import unittest.mock
         from omini_rtksync.credential_check import CheckResult
-        from omini_rtksync.providers import ApiKeyProvider
+        from omini_rtksync.gateway import ApiKeyProvider
 
         provider = ApiKeyProvider(validate_credentials=True)
         with unittest.mock.patch(
-            "omini_rtksync.providers.check_connection",
+            "omini_rtksync.gateway.check_connection",
             return_value=CheckResult(state=estado, detail=detalhe, checked_at="2026-01-01T00:00:00Z"),
         ):
             _, _, msgs = provider.check_and_refresh(

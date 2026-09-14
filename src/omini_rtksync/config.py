@@ -1,4 +1,4 @@
-"""Configurações globais e carregamento de variáveis de ambiente para o OminiRTKSync."""
+"""Configurações globais e carregamento de variáveis de ambiente deste sincronizador."""
 
 import os
 from dataclasses import dataclass
@@ -39,7 +39,7 @@ def load_dotenv(dotenv_path: str = ".env") -> None:
 
 @dataclass
 class Settings:
-    """Configurações de execução do OminiRTKSync para OmniRoute."""
+    """Configurações de execução deste sincronizador."""
     db_path: str
     host_home: str = ""
     omniroute_url: str = "http://127.0.0.1:20128"
@@ -215,7 +215,7 @@ class Settings:
         ]
         valid_paths = [p for p in default_paths if p]
 
-        # Descoberta de banco SQLite do OmniRoute
+        # Descoberta do banco SQLite do gateway
         db_path = os.environ.get("DB_PATH", "")
         if not db_path:
             candidate_dbs = [

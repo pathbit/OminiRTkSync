@@ -24,6 +24,7 @@ republishes these pages automatically. Editing a page directly here will be over
 | [Remote Access](Remote-Access) | Tunnel, Tailscale, and what has to be on before either |
 | [Egress Testing](Egress-Testing) | A bench that proves where the traffic actually leaves from |
 | [Egress and Multi-Session](Egress-And-Multi-Session) | Why several accounts sharing one outbound address is the risk, and what the gateway models |
+| [Licensing and Capacity](Licensing-And-Capacity) | How many subscriptions for how many developers — the formula, the measured demand, and the divisor nobody publishes |
 | [Troubleshooting](Troubleshooting) | Concrete symptoms and what they actually mean |
 | [Upstream Fixes](Upstream-Fixes) | Bugs found in the gateways and the patches sent upstream |
 
@@ -84,7 +85,7 @@ credential on first boot — read it and sign in as `admin`, then set a real
 password on the screen:
 
 ```bash
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 Full detail in [Authentication](Authentication).

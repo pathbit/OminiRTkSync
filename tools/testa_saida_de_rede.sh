@@ -15,21 +15,21 @@
 #   tools/testa_saida_de_rede.sh
 #
 # Variaveis (todas com padrao):
-#   ECHO_URL    destino visto de dentro da rede de teste  (172.31.0.20:8080)
-#   PROXY_A     proxy A, do host                          (127.0.0.1:18081)
-#   PROXY_B     proxy B, do host                          (127.0.0.1:18082)
-#   IP_HOST     o que o destino ve numa saida direta      (172.31.0.1)
-#   IP_PROXY_A / IP_PROXY_B   enderecos dos proxies       (172.31.0.11/.12)
+#   ECHO_URL    destino visto de dentro da rede de teste  (172.32.0.20:8080)
+#   PROXY_A     proxy A, do host                          (127.0.0.1:18091)
+#   PROXY_B     proxy B, do host                          (127.0.0.1:18092)
+#   IP_HOST     o que o destino ve numa saida direta      (172.32.0.1)
+#   IP_PROXY_A / IP_PROXY_B   enderecos dos proxies       (172.32.0.11/.12)
 
 set -uo pipefail
 
-ECHO_URL="${ECHO_URL:-http://172.31.0.20:8080}"
-ECHO_HOST="${ECHO_HOST:-http://127.0.0.1:18080}"
-PROXY_A="${PROXY_A:-http://127.0.0.1:18081}"
-PROXY_B="${PROXY_B:-http://127.0.0.1:18082}"
-IP_HOST="${IP_HOST:-172.31.0.1}"
-IP_PROXY_A="${IP_PROXY_A:-172.31.0.11}"
-IP_PROXY_B="${IP_PROXY_B:-172.31.0.12}"
+ECHO_URL="${ECHO_URL:-http://172.32.0.20:8080}"
+ECHO_HOST="${ECHO_HOST:-http://127.0.0.1:18090}"
+PROXY_A="${PROXY_A:-http://127.0.0.1:18091}"
+PROXY_B="${PROXY_B:-http://127.0.0.1:18092}"
+IP_HOST="${IP_HOST:-172.32.0.1}"
+IP_PROXY_A="${IP_PROXY_A:-172.32.0.11}"
+IP_PROXY_B="${IP_PROXY_B:-172.32.0.12}"
 
 TOTAL=0
 FALHAS=0
@@ -103,8 +103,8 @@ echo
 echo "-- 5. A PERGUNTA QUE IMPORTA: com o proxy fora do ar, o que acontece? --"
 echo "     Se a requisicao ainda for atendida, ela saiu DIRETO -- pelo IP da"
 echo "     maquina, com o token da conta. E o vazamento silencioso."
-if docker ps --format '{{.Names}}' | grep -qx egress-proxy-b; then
-  docker stop egress-proxy-b >/dev/null 2>&1
+if docker ps --format '{{.Names}}' | grep -qx ominirtk-proxy-b; then
+  docker stop ominirtk-proxy-b >/dev/null 2>&1
   sleep 2
   visto=$(origem_vista "$PROXY_B" "/proxy-morto")
   if [ -z "$visto" ]; then
@@ -115,10 +115,10 @@ if docker ps --format '{{.Names}}' | grep -qx egress-proxy-b; then
   else
     falha "proxy fora do ar -> a requisicao FALHA" "resposta inesperada de $visto"
   fi
-  docker start egress-proxy-b >/dev/null 2>&1
+  docker start ominirtk-proxy-b >/dev/null 2>&1
   sleep 3
 else
-  falha "proxy fora do ar -> a requisicao FALHA" "egress-proxy-b nao esta na bancada"
+  falha "proxy fora do ar -> a requisicao FALHA" "ominirtk-proxy-b nao esta na bancada"
 fi
 
 echo

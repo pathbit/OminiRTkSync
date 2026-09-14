@@ -34,6 +34,11 @@ COPY pyproject.toml /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -e .
 
+# Criado na imagem, com o dono que o compose usa: um volume nomeado herda o
+# dono do diretorio que cobre. Sem isto ele nasce root e o processo (uid 1000)
+# nao consegue escrever o proprio log.
+RUN mkdir -p /app/logs && chown -R 1000:1000 /app/logs
+
 EXPOSE 9090
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \

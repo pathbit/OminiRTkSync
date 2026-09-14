@@ -74,10 +74,9 @@ do not control, and you accept that the address is public to whoever has it.
   internet and your accounts is `REQUIRE_LOGIN` and `REQUIRE_API_KEY`.
 - The address changes every time the tunnel is re-enabled, unless you bring your
   own named Cloudflare tunnel.
-- The dashboard blocks the button while login is off — but that gate lives in the
-  screen. The gateway's own `POST /api/tunnel/enable` does not re-check it, so a script or an
-  extension can enable the tunnel while login is still off. Set the two flags
-  first and the question does not arise.
+- Running `cloudflared` yourself means **no screen gates the tunnel**: there is no
+  dashboard check to warn you that login is still off. The command publishes the
+  gateway exactly as it is. Set the two flags first and the question does not arise.
 
 ---
 
@@ -158,6 +157,120 @@ and reach it through the same tunnel or tailnet you use for everything else.
 
 ---
 
+---
+
+## Colocando de pé: os dois perfis do compose
+
+O botão `Tunnel` / `Tailscale` que o painel do gateway oferece instala o binário
+**dentro do contêiner do gateway**, que é efêmero: recriar a stack desfaz a
+instalação, e nada no compose registra que aquilo existiu. É por isso que o
+diálogo do Tailscale responde *"Tailscale is not installed"* numa máquina onde
+você jurava ter instalado.
+
+Este repositório declara os dois como serviços opcionais, que sobem e descem com
+o resto e deixam rastro em arquivo:
+
+```bash
+# URL pública, via Cloudflare
+docker compose -f docker-compose.example.yml --profile tunel up -d
+
+# só quem está na sua tailnet
+docker compose -f docker-compose.example.yml --profile tailnet up -d
+```
+
+Sem `--profile`, nenhum dos dois sobe — o padrão continua sendo o painel preso
+ao loopback.
+
+### Antes de ligar qualquer um dos dois
+
+O painel do gateway avisa em vermelho: *"Change the default dashboard password
+before activating the tunnel."* O aviso não é decoração, e a ordem importa:
+
+```
+1. troque a senha do gateway (INITIAL_PASSWORD no .env, e o painel dele)
+2. REQUIRE_LOGIN=true
+3. REQUIRE_API_KEY=true  + uma chave para as suas ferramentas
+4. só então o túnel ou a tailnet
+```
+
+Com a porta em `127.0.0.1`, `REQUIRE_LOGIN=false` é aceitável porque só a sua
+máquina alcança. No instante em que um túnel sobe, esse raciocínio se inverte:
+`/v1` é prefixo público por projeto, então **quem souber a URL gasta as suas
+contas**.
+
+### Cloudflare: quick tunnel ou túnel nomeado
+
+Sem `TUNNEL_TOKEN` no `.env`, o serviço sobe um **quick tunnel**: zero
+configuração, e o endereço sai no log.
+
+```bash
+docker logs 9rtk-tunel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com'
+```
+
+Esse endereço é **novo a cada subida** e é **público para quem o tiver** — não há
+lista de permissão. Serve para uma demonstração, não para o dia a dia.
+
+Com `TUNNEL_TOKEN` preenchido (um túnel nomeado, criado no painel da Cloudflare),
+o endereço passa a ser estável e você ganha o que interessa de verdade:
+**Cloudflare Access na frente**, que autentica antes de a requisição chegar no
+gateway. É a única das opções aqui em que a autenticação acontece fora do
+produto.
+
+```bash
+# .env
+TUNNEL_TOKEN=<o token que o painel da Cloudflare mostra ao criar o túnel>
+```
+
+### Tailscale: a opção que não publica nada
+
+A diferença que decide a escolha: o túnel dá um endereço que **qualquer um**
+alcança; a tailnet só admite dispositivo que você cadastrou. Para um painel que
+lê credenciais, a segunda é quase sempre a certa.
+
+```bash
+# 1. gere uma chave efêmera em
+#    https://login.tailscale.com/admin/settings/keys
+# 2. ponha no .env
+TS_AUTHKEY=tskey-auth-...
+
+# 3. suba o perfil
+docker compose -f docker-compose.example.yml --profile tailnet up -d
+
+# 4. descubra o nome na tailnet
+docker exec ominirtk-tailnet tailscale status
+```
+
+Chave **efêmera** de propósito: o nó some sozinho da sua tailnet quando o
+contêiner morre, em vez de acumular máquinas fantasma na lista.
+
+### Qual dos dois
+
+| | Cloudflare quick | Cloudflare nomeado | Tailscale |
+| :--- | :--- | :--- | :--- |
+| Quem alcança | qualquer um com a URL | quem o Access deixar | só a sua tailnet |
+| Endereço estável | não | sim | sim |
+| Precisa de conta | não | sim (grátis) | sim (grátis) |
+| Autenticação fora do produto | não | **sim** (Access) | não (mas a rede já filtra) |
+| Bom para | uma demonstração | equipe, uso diário | você e os seus aparelhos |
+
+### O que o sincronizador faz por você aqui
+
+O painel deste sincronizador **não** deve ser exposto: ele lê o banco do gateway
+e mostra a saúde das credenciais. Os dois perfis acima apontam para o **gateway**,
+não para ele. Alcance o painel pelo mesmo túnel ou tailnet que você já usa para
+o resto, ou por `127.0.0.1` mesmo.
+
+Se você expuser assim mesmo, o login já está preparado: formulário próprio com
+cookie de sessão, teto de dez tentativas por endereço a cada cinco minutos
+(**429** com `Retry-After`), espera que dobra a cada falha e prova de trabalho
+depois da terceira. Confira o que você expôs:
+
+```bash
+# de outro aparelho, SEM credencial — os dois têm de recusar
+curl -si https://<seu-endereco>/v1/models | head -1     # espera-se 401
+curl -si https://<seu-endereco>/            | head -1     # espera-se 401 ou o formulário
+```
+
 # Em português
 
 Alcançar o gateway de outra máquina tem três respostas usuais. Elas diferem em
@@ -201,11 +314,18 @@ A ordem, portanto, não é preferência:
 3. só então, o túnel ou o Tailscale
 ```
 
-## Opção 1 — túnel Cloudflare (nativo do 9Router)
+## Opção 1 — túnel Cloudflare (sem botão nativo aqui)
 
-A tela **API Endpoint** tem o botão `Tunnel`. Ele registra um quick tunnel da
-Cloudflare e devolve um endereço público `https://…trycloudflare.com` que
-alcança o gateway sem abrir porta nenhuma no seu roteador.
+O OmniRoute não tem botão de túnel próprio — isso é recurso do 9Router. Para
+obter o mesmo resultado, rode o `cloudflared` você mesmo contra a porta
+publicada:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8082
+```
+
+Ele imprime um endereço público `https://…trycloudflare.com` que alcança o seu
+gateway sem abrir porta nenhuma no seu roteador.
 
 **Quando serve:** você precisa de uma URL alcançável de qualquer lugar,
 inclusive de dispositivos que você não controla, e aceita que o endereço seja
@@ -213,16 +333,16 @@ público para quem o tiver.
 
 **O que saber:** a URL é pública e não há lista de permissão — entre a internet
 e as suas contas existem apenas `REQUIRE_LOGIN` e `REQUIRE_API_KEY`. O endereço
-muda a cada reativação, a menos que você use um túnel nomeado seu. E o bloqueio
-do botão enquanto o login está desligado vive **na tela**: o `POST
-/api/tunnel/enable` do gateway não reavalia a condição. Ligue as duas variáveis antes e a
+muda a cada reativação, a menos que você use um túnel nomeado seu. E rodar o
+`cloudflared` à mão significa que **nenhuma tela segura o túnel**: não há
+verificação de painel para avisar que o login continua desligado — o comando
+publica o gateway exatamente como ele está. Ligue as duas variáveis antes e a
 questão não se coloca.
 
-## Opção 2 — Tailscale (nativo do 9Router, e o que preferir)
+## Opção 2 — Tailscale (o que preferir)
 
-A mesma tela tem o botão `Tailscale`, que instala e conecta o daemon. A sua
-máquina entra na sua tailnet e o gateway passa a ser alcançável num endereço
-`100.x.y.z`, ou num nome MagicDNS como `http://seu-host:20128`.
+A sua máquina entra na sua tailnet e o gateway passa a ser alcançável num
+endereço `100.x.y.z`, ou num nome MagicDNS como `http://seu-host:8082`.
 
 **Quando serve:** quase sempre. Só os dispositivos que você cadastrou alcançam o
 gateway — o endereço não é público e não há o que um estranho descubra.

@@ -21,6 +21,15 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
+# SAML 2.0 nao entra no fluxo padrao: exige uma biblioteca que assine e confira
+# XML (Exclusive XML Canonicalization 1.0, verificacao RSA e defesa contra XML
+# Signature Wrapping), e nada disso existe na biblioteca padrao do Python. O
+# OpenID Connect, ao contrario, e implementado com stdlib pura e nao depende de
+# nada declarado aqui. Enquanto esta dependencia nao estiver na imagem, a aba
+# SAML aparece desabilitada e o painel recusa liga-lo.
+[project.optional-dependencies]
+saml = ["python3-saml>=1.16"]
+
 [project.urls]
 Homepage = "https://github.com/pathbit/OminiRTkSync"
 Repository = "https://github.com/pathbit/OminiRTkSync"
@@ -33,3 +42,10 @@ omini-rtksync = "omini_rtksync.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# A suite tem de rodar sem depender de `pip install -e`. Sem isto, o repo
+# que por acaso tem uma instalacao editavel na maquina passa e o irmao
+# reprova na coleta -- com o mesmo codigo. Foi o que aconteceu aqui.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

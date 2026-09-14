@@ -1,4 +1,4 @@
-"""CLI e orquestrador do OminiRTKSync para OmniRoute."""
+"""CLI e orquestrador deste sincronizador."""
 
 import argparse
 import os
@@ -6,24 +6,32 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from .config import Settings
-from .credential_check import STATE_INVALID, STATE_VALID, check_oauth_token
+from .identidade import NOME_DO_GATEWAY, NOME_DO_PRODUTO
+from .credential_check import (
+    STATE_INVALID,
+    STATE_UNSUPPORTED,
+    STATE_VALID,
+    CheckResult,
+    check_oauth_token,
+    looks_encrypted,
+)
 from .logs import get_logger, setup_logging
 from .cron import CronScheduler
-from .database import (
+from .gateway import (
     get_all_combos,
     get_all_connections,
     normalize_expiry_format,
     update_connection,
     update_connection_health,
 )
-from .discovery import HostDiscoveryEngine
+from .gateway import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
-from .providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
-from .web import start_omini_web
+from .gateway import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
+from .web import start_web_server
 
 
 # Prefixos que descrevem falha. Emitir tudo em INFO fazia com que
@@ -82,11 +90,19 @@ class OmniSyncEngine:
 
     def _sync_all_locked(self):
         if not os.path.exists(self.settings.db_path):
-            log_msg("AVISO", f"Aguardando banco do OmniRoute em: {self.settings.db_path}")
-            return {"success": False, "error": "db_not_found"}
+            # O gateway cria o banco ao ser usado pela primeira vez. Ate la,
+            # o arquivo nao existir e o estado NORMAL de uma stack recem
+            # subida -- nao uma falha. Relatar como erro pintava o painel de
+            # vermelho no primeiro minuto de uso e ensinava o operador a
+            # ignorar o indicador, que e o oposto do que ele serve.
+            log_msg("INFO", f"Aguardando o gateway criar o banco em: {self.settings.db_path}")
+            return {"success": True, "waiting_for_gateway": True,
+                    "total_connections": 0, "refreshed": 0, "normalized": 0,
+                    "combos_synced": 0, "details": [],
+                    "timestamp": datetime.now(timezone.utc).isoformat()}
 
         conns = get_all_connections(self.settings.db_path)
-        log_msg("INFO", f"Inspecionando {len(conns)} conexões no OmniRoute ({self.settings.db_path})...")
+        log_msg("INFO", f"Inspecionando {len(conns)} conexões no gateway ({self.settings.db_path})...")
 
         refreshed = 0
         normalized = 0
@@ -110,7 +126,7 @@ class OmniSyncEngine:
 
             # Cura o formato de expiração para QUALQUER provedor OAuth, não só
             # para o ramo do Antigravity. Um epoch numérico em texto é Invalid
-            # Date para o OmniRoute; se a renovação falhar — refresh token
+            # Date para o gateway; se a renovação falhar — refresh token
             # revogado, client credentials ausentes — o valor ilegível
             # permanecia para sempre justamente no caso em que mais importa.
             bruto_expiracao = str(c.get("expiresAt") or "")
@@ -148,9 +164,24 @@ class OmniSyncEngine:
                 # gravada ainda está no futuro continuava sendo exibido como
                 # ativo — que é exatamente o caso que o painel precisa mostrar.
                 if self.settings.validate_credentials and c.get("accessToken"):
-                    veredito = check_oauth_token(
-                        str(c.get("accessToken")), timeout=self.settings.validation_timeout
-                    )
+                    # Credencial cifrada em repouso não é credencial inválida:
+                    # o que temos em mãos é um texto que não sabemos abrir.
+                    # Sondar com ele só produz uma recusa do provedor, e gravar
+                    # essa recusa marcava de vermelho, no painel do próprio
+                    # gateway, uma conta que ninguém chegou a testar.
+                    if looks_encrypted(c.get("accessToken")):
+                        nota = "Token cifrado em repouso pelo gateway: não verificável daqui"
+                        log_msg("INFO", f"[{provider} · {name}] {nota}")
+                        detalhe["actions"].append(nota)
+                        veredito = CheckResult(
+                            state=STATE_UNSUPPORTED,
+                            detail="Access token is encrypted at rest by the gateway",
+                        )
+                    else:
+                        veredito = check_oauth_token(
+                            str(c.get("accessToken")), timeout=self.settings.validation_timeout
+                        )
+
                     if veredito.state == STATE_INVALID:
                         nota = f"Token de acesso RECUSADO pelo Google ({veredito.detail})"
                         log_msg("FALHA", f"[{provider} · {name}] {nota}")
@@ -168,7 +199,7 @@ class OmniSyncEngine:
                         # Gravar só o resultado da sonda deixava para trás o
                         # `test_status='invalid'` de uma falha anterior, que não
                         # caduca sozinho. 'active' é o único valor que o
-                        # OmniRoute trata como saudável (clearAccountError), e é
+                        # o gateway trata como saudável (clearAccountError), e é
                         # o que a credencial acabou de provar que é.
                         update_connection_health(
                             self.settings.db_path,
@@ -342,7 +373,7 @@ def run_daemon(settings: Settings):
 
     def handle_signal(sig, frame):
         nonlocal running
-        print(f"\n[!] Sinal {sig} recebido. Encerrando OminiRTKSync...", flush=True)
+        print(f"\n[!] Sinal {sig} recebido. Encerrando {NOME_DO_PRODUTO}...", flush=True)
         running = False
 
     signal.signal(signal.SIGINT, handle_signal)
@@ -368,12 +399,12 @@ def run_daemon(settings: Settings):
     cron_scheduler = CronScheduler(
         sync_callback=engine.sync_all,
         interval_seconds=settings.cron_interval,
-        name="OminiRTKSync-CronScheduler",
+        name=f"{NOME_DO_PRODUTO}-CronScheduler",
     )
 
     if settings.enable_web:
         try:
-            start_omini_web(
+            start_web_server(
                 settings.web_host,
                 settings.web_port,
                 settings.db_path,
@@ -395,16 +426,16 @@ def run_daemon(settings: Settings):
         time.sleep(1)
 
     cron_scheduler.stop()
-    print("[*] OminiRTKSync encerrado.", flush=True)
+    print(f"[*] {NOME_DO_PRODUTO} encerrado.", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="ominirtksync",
-        description="OminiRTKSync · OmniRoute Universal Token & Connection Sync",
+        description=f"{NOME_DO_PRODUTO} · {NOME_DO_GATEWAY} Universal Token & Connection Sync",
     )
-    parser.add_argument("--db-path", dest="db_path", help="Caminho para o storage.sqlite do OmniRoute")
-    parser.add_argument("--status", action="store_true", help="Exibe status das conexões do OmniRoute e sai")
+    parser.add_argument("--db-path", dest="db_path", help=f"Caminho para o storage.sqlite do {NOME_DO_GATEWAY}")
+    parser.add_argument("--status", action="store_true", help=f"Exibe status das conexões do {NOME_DO_GATEWAY} e sai")
     parser.add_argument("--once", action="store_true", help="Executa uma rodada única de sincronização e sai")
     parser.add_argument("--daemon", action="store_true", help="Executa em modo daemon perpétuo")
     parser.add_argument("--interval", type=int, help="Intervalo de checagem em segundos (padrão: 300)")
@@ -412,7 +443,15 @@ def main():
     parser.add_argument("--no-web", action="store_true", help="Desativa dashboard web")
     parser.add_argument("--port", type=int, help="Porta do dashboard web (padrão: 9090)")
     parser.add_argument("--user", type=str, help="Usuário para autenticação no dashboard web (padrão: admin)")
-    parser.add_argument("--password", type=str, help="Senha para autenticação no dashboard web (padrão: pathbit)")
+    # Sem citar valor: um texto de --help é arquivo versionado, e uma senha de
+    # fábrica anunciada ali vira a senha real de toda instalação que copiou e
+    # colou. O padrão, além disso, não é "pathbit" -- é vazio (config.py), e o
+    # painel gera uma credencial de recuperação no primeiro boot.
+    parser.add_argument(
+        "--password",
+        type=str,
+        help="Senha para autenticação no dashboard web (sem padrão: defina DASHBOARD_PASSWORD)",
+    )
 
     args = parser.parse_args()
     settings = Settings.from_env()
@@ -459,7 +498,7 @@ def main():
     if args.once:
         engine = OmniSyncEngine(settings)
         res = engine.sync_all()
-        print(f"[*] Sincronização OmniRoute concluída: {res.get('total', 0)} conexões inspecionadas, {res.get('refreshed', 0)} renovadas.")
+        print(f"[*] Sincronização do {NOME_DO_GATEWAY} concluída: {res.get('total', 0)} conexões inspecionadas, {res.get('refreshed', 0)} renovadas.")
         return
 
     run_daemon(settings)

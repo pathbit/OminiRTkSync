@@ -120,10 +120,10 @@ class TestDashboardMarkup(unittest.TestCase):
             cron={"active": True, "intervalSeconds": 300, "totalRuns": 4, "totalRenewals": 0,
                   "lastRunAt": "2026-09-12T13:46:53Z", "nextRunAt": "2026-09-12T13:51:53Z",
                   "lastResult": {"totalInspected": 7, "refreshedCount": 0, "durationMs": 5}},
-            gateway={"url": "http://omniroute:20128", "online": True, "statusCode": 200,
+            gateway={"url": "http://ominirtk-router:20128", "online": True, "statusCode": 200,
                      "latencyMs": 9, "dbSummary": "Operacional (7 conexoes, 5 combos)"},
             db_path="/app/data/db/data.sqlite",
-            router_url="http://omniroute:20128",
+            router_url="http://ominirtk-router:20128",
             current_user="admin",
             is_default_password=True,
             refresh_margin=900,
@@ -160,8 +160,13 @@ class TestDashboardMarkup(unittest.TestCase):
 
     def test_refresh_controls_are_present(self):
         page = self._page()
-        self.assertIn('action="/acoes/atualizar"', page)     # botão Atualizar
-        self.assertIn('action="/acoes/sincronizar"', page)   # Sincronizar agora
+        # "Atualizar" saiu da barra: recarregar a página e rodar o ciclo viraram
+        # um botão só ("Sync now"), porque dois botões vizinhos que parecem
+        # fazer a mesma coisa fazem o operador escolher no escuro.
+        self.assertIn('action="/logout"', page)              # botão Sair
+        # Sincronizar dispara pelo agendador, para que a execucao manual
+        # apareca no historico junto com as automaticas.
+        self.assertIn('action="/acoes/cron"', page)   # Sincronizar agora
         self.assertIn('action="/acoes/cron"', page)          # Executar ciclo
         self.assertIn('action="/acoes/testar-gateway"', page)
 
@@ -269,7 +274,7 @@ class TestDashboardOverHttp(unittest.TestCase):
             dashboard_user="admin", dashboard_password="senha-forte",
             dashboard_auth_from_env=True,
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", 19393, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)

@@ -160,6 +160,16 @@ class TestEnvManagedAuthNeedsAPassword(unittest.TestCase):
         for chave in self.original:
             os.environ.pop(chave, None)
 
+    # self.settings() carrega um .env do diretorio atual quando existe, e o
+    # fluxo documentado (`make setup`) cria justamente esse arquivo. Sem apontar
+    # para um caminho inexistente, a suite passaria a ler a senha real de quem
+    # configurou a propria stack -- e falharia na maquina de quem seguiu a
+    # documentacao, que e o pior lugar para uma falha aparecer.
+    SEM_ARQUIVO = "/nao-existe/.env"
+
+    def settings(self):
+        return Settings.from_env(self.SEM_ARQUIVO)
+
     def restaurar(self):
         for chave, valor in self.original.items():
             if valor is None:
@@ -169,23 +179,23 @@ class TestEnvManagedAuthNeedsAPassword(unittest.TestCase):
 
     def test_only_the_user_set_is_not_env_managed(self):
         os.environ["DASHBOARD_USER"] = "admin"
-        self.assertFalse(Settings.from_env().dashboard_auth_from_env)
+        self.assertFalse(self.settings().dashboard_auth_from_env)
 
     def test_the_shape_shipped_in_the_compose_example_is_not_env_managed(self):
         # Exatamente o que o docker-compose.example.yml produz.
         os.environ["DASHBOARD_USER"] = "admin"
         os.environ["DASHBOARD_PASSWORD"] = ""
-        settings = Settings.from_env()
+        settings = self.settings()
         self.assertFalse(settings.dashboard_auth_from_env)
         # E o nome de usuario continua sendo respeitado.
         self.assertEqual(settings.dashboard_user, "admin")
 
     def test_a_real_password_is_env_managed(self):
         os.environ["DASHBOARD_PASSWORD"] = "Sample1!"
-        self.assertTrue(Settings.from_env().dashboard_auth_from_env)
+        self.assertTrue(self.settings().dashboard_auth_from_env)
 
     def test_nothing_set_is_not_env_managed(self):
-        self.assertFalse(Settings.from_env().dashboard_auth_from_env)
+        self.assertFalse(self.settings().dashboard_auth_from_env)
 
 
 if __name__ == "__main__":

@@ -92,8 +92,8 @@ password.
 **Retrieving it later**
 
 ```bash
-docker logs ominirtksync 2>&1 | grep "Recovery hash"
-docker exec ominirtksync cat /app/data/.dashboard_recovery
+docker logs ominirtk-sync 2>&1 | grep "Recovery hash"
+docker exec ominirtk-sync cat /app/data/.dashboard_recovery
 ```
 
 **Notes**

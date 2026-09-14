@@ -23,6 +23,12 @@ ENV_EXAMPLE = RAIZ_REPO / ".env.example"
 # container do 9Router -- nao por este programa.
 DO_GATEWAY = {"INITIAL_PASSWORD", "JWT_SECRET", "REQUIRE_API_KEY", "REQUIRE_LOGIN"}
 
+# Lidas pelo COMPOSE, não pelo código Python: alimentam os serviços opcionais de
+# acesso remoto (perfis `tunel` e `tailnet`). Precisam estar anunciadas no
+# exemplo -- é lá que o operador descobre que existem -- mas nenhum os.environ
+# daqui as procura, e é isso que a varredura acima mede.
+DO_COMPOSE = {"TUNNEL_TOKEN", "TS_AUTHKEY"}
+
 LEITURA = re.compile(r'os\.(?:environ\.get|getenv)\(\s*["\']([A-Z0-9_]+)["\']')
 INDICE = re.compile(r'os\.environ\[\s*["\']([A-Z0-9_]+)["\']')
 DECLARACAO = re.compile(r'^#?\s*([A-Z0-9_]+)=', re.M)
@@ -53,7 +59,7 @@ class TestDocumentacaoDeAmbiente(unittest.TestCase):
         )
 
     def test_the_example_documents_nothing_the_code_ignores(self):
-        sobrando = sorted(variaveis_documentadas() - variaveis_lidas() - DO_GATEWAY)
+        sobrando = sorted(variaveis_documentadas() - variaveis_lidas() - DO_GATEWAY - DO_COMPOSE)
         self.assertEqual(
             sobrando, [],
             "variaveis no .env.example que programa nenhum le: " + ", ".join(sobrando),

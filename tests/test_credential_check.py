@@ -9,7 +9,7 @@ import urllib.error
 
 from omini_rtksync import credential_check as cc
 from omini_rtksync.models import ConnectionRecord
-from omini_rtksync.providers import ApiKeyProvider
+from omini_rtksync.gateway import ApiKeyProvider
 
 
 class FakeResponse:

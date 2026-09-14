@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from omini_rtksync.database import (
+from omini_rtksync.gateway import (
     detect_connection_table,
     get_all_connections,
     get_db_connection,
