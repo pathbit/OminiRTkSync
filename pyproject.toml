@@ -42,3 +42,10 @@ omini-rtksync = "omini_rtksync.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# A suite tem de rodar sem depender de `pip install -e`. Sem isto, o repo
+# que por acaso tem uma instalacao editavel na maquina passa e o irmao
+# reprova na coleta -- com o mesmo codigo. Foi o que aconteceu aqui.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

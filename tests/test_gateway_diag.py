@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 from omini_rtksync.config import Settings
-from omini_rtksync.web import start_omini_web
+from omini_rtksync.web import start_web_server
 
 
 class TestOminiGatewayDiag(unittest.TestCase):
@@ -30,7 +30,7 @@ class TestOminiGatewayDiag(unittest.TestCase):
             dashboard_password="testpassword",
             omniroute_url="http://mock-omniroute:20128",
         )
-        cls.server = start_omini_web(
+        cls.server = start_web_server(
             host=cls.settings.web_host,
             port=cls.settings.web_port,
             db_path=cls.settings.db_path,

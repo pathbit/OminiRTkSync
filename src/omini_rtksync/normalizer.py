@@ -1,4 +1,4 @@
-"""Normalização de datas e auto-cura para OmniRoute."""
+"""Normalização de datas e auto-cura no banco do gateway."""
 
 from datetime import datetime
 from typing import Any, Optional

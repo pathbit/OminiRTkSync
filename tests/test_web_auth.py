@@ -10,7 +10,7 @@ import urllib.request
 import unittest
 
 from omini_rtksync.config import Settings
-from omini_rtksync.web import start_omini_web
+from omini_rtksync.web import start_web_server
 
 
 class TestOminiWebAuth(unittest.TestCase):
@@ -29,7 +29,7 @@ class TestOminiWebAuth(unittest.TestCase):
             dashboard_user="admin",
             dashboard_password="testpassword",
         )
-        cls.server = start_omini_web(
+        cls.server = start_web_server(
             host=cls.settings.web_host,
             port=cls.settings.web_port,
             db_path=cls.settings.db_path,

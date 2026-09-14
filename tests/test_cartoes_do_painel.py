@@ -17,7 +17,7 @@ import tempfile
 import time
 import unittest
 
-from omini_rtksync.database import get_all_api_keys, get_all_registered_models
+from omini_rtksync.gateway import get_all_api_keys, get_all_registered_models
 from omini_rtksync.models import (
     ConnectionRecord,
     RegisteredModelRecord,

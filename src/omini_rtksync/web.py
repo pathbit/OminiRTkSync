@@ -1,4 +1,4 @@
-"""Servidor HTTP e dashboard web para OminiRTKSync com Basic Auth e Cron Scheduler."""
+"""Servidor HTTP e dashboard web com Basic Auth e Cron Scheduler."""
 
 import base64
 import json
@@ -15,13 +15,14 @@ from typing import Any, Callable, Dict, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .config import Settings
-from .database import (
+from .gateway import (
     get_all_api_keys,
     get_all_combos,
     get_all_connections,
     get_all_registered_models,
 )
 from .i18n import DEFAULT_LANGUAGE, normalize_language, translate
+from .identidade import NOME_DO_GATEWAY, NOME_DO_PRODUTO
 from .models import ConnectionRecord, RegisteredModelRecord, VirtualKeyRecord
 from .logs import get_logger
 from .prefs import get_preference, resolve_prefs_path, set_preference
@@ -53,7 +54,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-class OminiDashboardHandler(BaseHTTPRequestHandler):
+class DashboardHandler(BaseHTTPRequestHandler):
 
     # O cabecalho Server ia na PRIMEIRA linha de toda resposta -- inclusive no
     # 401, antes de qualquer autenticacao -- anunciando "BaseHTTP/0.6
@@ -64,7 +65,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
     # version_string() tambem e sobrescrito porque o BaseHTTPRequestHandler
     # concatena server_version + " " + sys_version: com sys_version vazio, a
     # resposta sai com um espaco sobrando no fim do valor.
-    server_version = "OminiRTKSync"
+    server_version = NOME_DO_PRODUTO
     sys_version = ""
 
     def version_string(self) -> str:
@@ -143,7 +144,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             translate("auth.required", lang), translate("auth.required_body", lang)
         )
         self.send_response(HTTPStatus.UNAUTHORIZED)
-        self.send_header("WWW-Authenticate", 'Basic realm="OminiRTKSync Dashboard"')
+        self.send_header("WWW-Authenticate", f'Basic realm="{NOME_DO_PRODUTO} Dashboard"')
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
@@ -375,7 +376,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         try:
             req = urllib.request.Request(
                 self.omniroute_url,
-                headers={"User-Agent": "OminiRTKSync-Healthcheck/1.0"},
+                headers={"User-Agent": f"{NOME_DO_PRODUTO}-Healthcheck/1.0"},
             )
             with urllib.request.urlopen(req, timeout=3.0) as resp:
                 gateway_ok = resp.status < 500
@@ -448,7 +449,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Location", destino)
         self.send_header(
             "Set-Cookie",
-            sessao.cabecalho_para_gravar_estado_sso(
+            sessao.cabecalho_para_gravar_estado(
                 sessao.emitir_estado_sso(state, nonce, verificador)
             ),
         )
@@ -514,7 +515,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(f"sso:{email}"))
         )
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado_sso())
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -525,7 +526,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         payload = render_login_page(lang, translate("sso.failed", lang))
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado_sso())
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -755,7 +756,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
         try:
             req = urllib.request.Request(
                 target_url,
-                headers={"User-Agent": "OminiRTKSync-Tester/1.0"},
+                headers={"User-Agent": f"{NOME_DO_PRODUTO}-Tester/1.0"},
             )
             with urllib.request.urlopen(req, timeout=5.0) as resp:
                 status_code = resp.status
@@ -791,7 +792,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
             "dbPath": self.db_path,
             "connectionsCount": conns_count,
             "combosCount": combos_count,
-            "message": "Gateway OmniRoute e banco storage.sqlite 100% operacionais!" if (gateway_ok and db_exists) else "Falha ao conectar ao OmniRoute ou banco indisponivel",
+            "message": f"Gateway {NOME_DO_GATEWAY} e banco storage.sqlite 100% operacionais!" if (gateway_ok and db_exists) else f"Falha ao conectar ao {NOME_DO_GATEWAY} ou banco indisponivel",
         }
 
         body = json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")
@@ -1208,7 +1209,7 @@ class OminiDashboardHandler(BaseHTTPRequestHandler):
 
 
 
-def start_omini_web(
+def start_web_server(
     host: str,
     port: int,
     db_path: str,
@@ -1217,13 +1218,13 @@ def start_omini_web(
     settings: Optional[Settings] = None,
     cron_scheduler: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
-    OminiDashboardHandler.db_path = db_path
-    OminiDashboardHandler.omniroute_url = omniroute_url
-    OminiDashboardHandler.sync_callback = sync_callback
-    OminiDashboardHandler.settings = settings
-    OminiDashboardHandler.cron_scheduler = cron_scheduler
+    DashboardHandler.db_path = db_path
+    DashboardHandler.omniroute_url = omniroute_url
+    DashboardHandler.sync_callback = sync_callback
+    DashboardHandler.settings = settings
+    DashboardHandler.cron_scheduler = cron_scheduler
 
-    server = QuietThreadingHTTPServer((host, port), OminiDashboardHandler)
+    server = QuietThreadingHTTPServer((host, port), DashboardHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server

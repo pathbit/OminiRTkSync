@@ -283,7 +283,7 @@ worth naming each link, because the field names differ at every step.
 `rate_limited_until TEXT` on `provider_connections` — or as `rateLimitedUntil`
 inside the JSON `data` column on installs migrated from the single-column schema.
 `get_all_connections` projects both onto one key, `rateLimitedUntil`
-(`src/omini_rtksync/database.py:160`). `ConnectionRecord.rate_limit_active`
+(`src/omini_rtksync/gateway.py:193`). `ConnectionRecord.rate_limit_active`
 reads it as **a deadline, not a flag** (`src/omini_rtksync/models.py:157-169`) — it
 holds the instant the provider's window reopens, so treating the field's mere
 presence as "limited" left a connection yellow forever after its first 429.
@@ -309,7 +309,7 @@ API-key path, which is sized by tier rather than by seat.
 **The cheapest lever.** **Registered combos** and the **Resilience combos**
 section list each combo and its model cascade, read from OmniRoute's `combos`
 table as `name`, `kind` and `models`
-(`src/omini_rtksync/database.py:416-440`). This matters more than it looks:
+(`src/omini_rtksync/gateway.py:449-473`). This matters more than it looks:
 quota can be exhausted **per model family** while the account itself stays
 healthy. During an Antigravity block, every Gemini-family model returned 503
 while Claude and the open-weight models on the same account kept answering
@@ -345,7 +345,7 @@ synchronizer reads credential health; it is not a metering product.
 `provider_connections` also carries `backoff_level INTEGER DEFAULT 0`
 `[FONTE: schema lido de diegosouzapw/omniroute:latest em execução, 2026-09-12]`.
 The sync clears `rate_limited_until` when the deadline passes
-(`src/omini_rtksync/database.py:343-345`) but **never resets `backoff_level`** —
+(`src/omini_rtksync/gateway.py:376-378`) but **never resets `backoff_level`** —
 there is no occurrence of the string anywhere under `src/`. The sibling project
 9RTKSync does zero its equivalent when it clears the hold
 `[FONTE: 9RTKSync/src/nine_rtksync/normalizer.py:87 — `data["backoffLevel"] = 0`]`.
@@ -650,7 +650,7 @@ not a shortage of quota: `expires_at` is a TEXT column that OmniRoute reads with
 `new Date(...)`, so a numeric epoch written as text becomes an invalid date, the
 gateway concludes the connection has no known expiry, and proactive renewal
 stops for that connection. The synchronizer writes ISO-8601 there, the gateway's
-own native format (`src/omini_rtksync/database.py:176-210`). **Neither clock
+own native format (`src/omini_rtksync/gateway.py:209-243`). **Neither clock
 belongs in the capacity formula.** [Upstream Fixes](Upstream-Fixes) has the
 gateway-side story of that parsing bug.
 
@@ -854,7 +854,7 @@ vale mais que contar cadeiras.
 **O sinal de saturação.** O OmniRoute grava a trava na coluna
 `rate_limited_until` de `provider_connections`, ou como `rateLimitedUntil` dentro
 da coluna JSON `data` em instalações migradas. O `get_all_connections` projeta as
-duas numa chave só, `rateLimitedUntil` (`src/omini_rtksync/database.py:160`), e
+duas numa chave só, `rateLimitedUntil` (`src/omini_rtksync/gateway.py:193`), e
 `ConnectionRecord.rate_limit_active` a lê como **prazo, não bandeira**
 (`src/omini_rtksync/models.py:157-169`): ela guarda o instante em que a janela do
 provedor reabre, e tratar a presença do campo como "limitada" deixava a conexão
@@ -878,7 +878,7 @@ termos de uso; o segundo é o caminho dimensionado por tier.
 **A alavanca mais barata.** **Combos registrados** e a seção **Combos de
 resiliência** listam cada combo e sua cascata de modelos, lidos da tabela
 `combos` do OmniRoute como `name`, `kind` e `models`
-(`src/omini_rtksync/database.py:416-440`). A quota pode se esgotar **por família
+(`src/omini_rtksync/gateway.py:449-473`). A quota pode se esgotar **por família
 de modelo** com a conta seguindo saudável: durante um bloqueio do Antigravity,
 todos os modelos da família Gemini devolveram 503 enquanto os Claude e os de
 peso aberto da mesma conta continuaram respondendo `[FONTE:
@@ -906,7 +906,7 @@ sincronizador lê saúde de credencial; não é produto de medição.
 **Uma lacuna, registrada:** `provider_connections` tem também
 `backoff_level INTEGER DEFAULT 0` `[FONTE: schema lido de
 diegosouzapw/omniroute:latest em execução, 2026-09-12]`. O sincronizador limpa
-`rate_limited_until` quando o prazo vence (`src/omini_rtksync/database.py:343-345`)
+`rate_limited_until` quando o prazo vence (`src/omini_rtksync/gateway.py:376-378`)
 mas **nunca zera `backoff_level`** — a string não aparece em lugar nenhum sob
 `src/`. O irmão 9RTKSync zera o equivalente ao limpar a trava `[FONTE:
 9RTKSync/src/nine_rtksync/normalizer.py:87 — `data["backoffLevel"] = 0`]`. Se o
@@ -1089,7 +1089,7 @@ cota: `expires_at` é coluna TEXT lida com `new Date(...)`, e um epoch numérico
 gravado como texto vira data inválida, o gateway conclui que a conexão não tem
 expiração conhecida e para de renovar preventivamente. O sincronizador grava
 ISO-8601, o formato nativo do próprio gateway
-(`src/omini_rtksync/database.py:176-210`). **Nenhum dos dois relógios entra na
+(`src/omini_rtksync/gateway.py:209-243`). **Nenhum dos dois relógios entra na
 fórmula.** O [Upstream Fixes](Upstream-Fixes) conta o lado do gateway nesse bug
 de parsing.
 

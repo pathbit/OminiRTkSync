@@ -599,7 +599,9 @@ def conclui_callback(
         estado = sessao.ler_estado_sso(cookie_de_estado, agora=agora)
     if not estado:
         raise ErroDeSSO("cookie de estado ausente ou invalido")
-    state_do_cookie, nonce_do_cookie, verificador = estado
+    state_do_cookie = str(estado["state"])
+    nonce_do_cookie = str(estado["nonce"])
+    verificador = str(estado["verificador"])
 
     # 3. O `state` da query tem de ser o do cookie, e de uso único.
     if not state_da_query or not hmac.compare_digest(state_da_query, state_do_cookie):

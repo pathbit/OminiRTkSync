@@ -38,7 +38,7 @@ class TestHealthzResilience(unittest.TestCase):
             dashboard_user="admin",
             dashboard_password="senha-de-teste",
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", 19391, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)
@@ -157,7 +157,7 @@ class TestQuietHandleError(unittest.TestCase):
             def write(self, _payload):
                 raise BrokenPipeError(32, "Broken pipe")
 
-        handler = web_server.OminiDashboardHandler.__new__(web_server.OminiDashboardHandler)
+        handler = web_server.DashboardHandler.__new__(web_server.DashboardHandler)
         handler.wfile = ExplodingWriter()
         handler.close_connection = False
 
@@ -178,7 +178,7 @@ class TestRouterProbeCache(unittest.TestCase):
     def _handler_with_fake_probe(self, url: str):
         calls = self.calls
 
-        class FakeHandler(web_server.OminiDashboardHandler):
+        class FakeHandler(web_server.DashboardHandler):
             omniroute_url = url
 
             def __init__(self):  # não instancia socket: só exercita probe_gateway

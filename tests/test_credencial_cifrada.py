@@ -110,7 +110,7 @@ class SaudeNaoSeInventa(unittest.TestCase):
         return caminho
 
     def test_coluna_vazia_nao_vira_active(self):
-        from omini_rtksync.database import get_all_connections
+        from omini_rtksync.gateway import get_all_connections
 
         conexoes = get_all_connections(self._banco_com_uma_conexao_sem_estado())
         self.assertEqual(len(conexoes), 1)

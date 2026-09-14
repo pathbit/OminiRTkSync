@@ -1,8 +1,8 @@
-"""OmniRoute connection model exposing the same interface the dashboard consumes.
+"""Gateway connection model exposing the same interface the dashboard consumes.
 
-database.py returns dictionaries (the OmniRoute schema is relational). This layer
+database.py returns dictionaries (this gateway schema is relational). This layer
 wraps them in an object carrying the derived properties the screen needs, keeping
-the renderer identical to the sibling project 9RTKSync.
+the renderer identical to the sibling projects.
 """
 
 import time
@@ -77,7 +77,7 @@ class ConnectionRecord:
     def base_url(self) -> Optional[str]:
         """Endereço do provedor, onde quer que o gateway o tenha guardado.
 
-        O 9Router aninha em providerSpecificData; lendo só a raiz, instância
+        Um dos gateways aninha em providerSpecificData; lendo só a raiz, instância
         local nenhuma exibia seus modelos.
         """
         specific = self.data.get("providerSpecificData")
@@ -103,7 +103,7 @@ class ConnectionRecord:
     def egress_status(self) -> str:
         """Como esta conexao sai para a internet: ``bound``, ``shared`` ou ``unknown``.
 
-        Somente leitura: quem manda no vinculo e o gateway. O OmniRoute guarda
+        Somente leitura: quem manda no vinculo e o gateway, que guarda
         os interruptores em ``provider_connections`` (``proxy_enabled`` e
         ``per_key_proxy_enabled``) e o vinculo em si em ``proxy_assignments``,
         com ``scope='account'`` e ``scope_id`` igual ao id da conexao. E exibido
@@ -193,7 +193,7 @@ class ConnectionRecord:
             # O gateway já pode ter carimbado a conexão como recusada. **Sem uma
             # sonda viva que diga o contrário**, o carimbo dele é a melhor
             # informação que existe — ignorá-lo mostrava como saudável uma
-            # credencial que o próprio OmniRoute sabe estar quebrada. Mas uma
+            # credencial que o próprio gateway sabe estar quebrada. Mas uma
             # validação viva vence tudo: o carimbo é do último erro do gateway
             # e não caduca sozinho, então honrá-lo mesmo depois de a sonda
             # aprovar a credencial repetia, ao contrário, a própria contradição
@@ -215,7 +215,7 @@ class ConnectionRecord:
             # Nunca sondada: dizer isso, em vez de alegar saúde que ninguém verificou.
             return "active" if probed == "valid" else "not_checked"
 
-        # OmniRoute writes "active"; 9Router writes "ok". Both mean healthy.
+        # One gateway writes "active", another writes "ok"; both mean healthy.
         return "active" if self.data.get("testStatus") in ("active", "ok") else "unknown"
 
 

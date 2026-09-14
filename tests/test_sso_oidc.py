@@ -37,7 +37,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from omini_rtksync import protecao, sso
 from omini_rtksync.config import Settings
 from omini_rtksync.prefs import resolve_prefs_path
-from omini_rtksync.web import start_omini_web
+from omini_rtksync.web import start_web_server
 
 PORTA = 19291
 PAINEL = f"http://127.0.0.1:{PORTA}"
@@ -187,7 +187,7 @@ class BaseDeSSO(unittest.TestCase):
         # não tem nada a ver com o que ele mede.
         cls.prefs_path = resolve_prefs_path(os.path.dirname(cls.db_path))
         cls.arquivo_do_segredo = sso.caminho_do_segredo(os.path.dirname(cls.db_path))
-        cls.server = start_omini_web(
+        cls.server = start_web_server(
             host="127.0.0.1", port=PORTA, db_path=cls.db_path, settings=cls.settings
         )
 

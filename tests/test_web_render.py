@@ -274,7 +274,7 @@ class TestDashboardOverHttp(unittest.TestCase):
             dashboard_user="admin", dashboard_password="senha-forte",
             dashboard_auth_from_env=True,
         )
-        cls.server = web_server.start_omini_web(
+        cls.server = web_server.start_web_server(
             "127.0.0.1", 19393, cls.db_path, omniroute_url="", settings=cls.settings
         )
         time.sleep(0.3)

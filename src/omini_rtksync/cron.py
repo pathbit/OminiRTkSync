@@ -1,10 +1,11 @@
-"""Motor de agendamento em background (CronScheduler) para o OminiRTKSync."""
+"""Motor de agendamento em background (CronScheduler) do painel."""
 
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from .identidade import NOME_DO_PRODUTO
 from .logs import get_logger
 
 
@@ -33,13 +34,13 @@ def _extract_log_lines(res: Any) -> List[str]:
 
 
 class CronScheduler:
-    """Agendador em background que gerencia a renovação contínua de contas OAuth e integridade de conexões no OmniRoute."""
+    """Agendador em background da renovacao continua de contas OAuth e da saude das conexoes."""
 
     def __init__(
         self,
         sync_callback: Callable[[], Dict[str, Any]],
         interval_seconds: int = 300,
-        name: str = "OminiRTKSync-Cron",
+        name: str = f"{NOME_DO_PRODUTO}-Cron",
     ):
         self.sync_callback = sync_callback
         self.interval_seconds = max(10, interval_seconds)
@@ -49,7 +50,7 @@ class CronScheduler:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
-        # Métricas
+        # Metricas de execucao
         self.total_runs = 0
         self.total_renewals = 0
         self.last_run_at: Optional[str] = None
@@ -58,6 +59,7 @@ class CronScheduler:
         self.history: List[Dict[str, Any]] = []
 
     def start(self):
+        """Sobe a thread de cron em background."""
         with self._lock:
             if self.is_running:
                 return
@@ -68,14 +70,17 @@ class CronScheduler:
             self._thread.start()
 
     def stop(self):
+        """Encerra a thread de cron sem violencia."""
         with self._lock:
             self.is_running = False
             self._stop_event.set()
 
     def trigger_now(self) -> Dict[str, Any]:
+        """Dispara um ciclo de sincronizacao agora, de forma sincrona."""
         return self._execute_cycle(reason="manual_trigger")
 
     def get_status(self) -> Dict[str, Any]:
+        """Retrato detalhado do agendador para a API e para o painel."""
         with self._lock:
             return {
                 "active": self.is_running,
@@ -97,7 +102,7 @@ class CronScheduler:
         start_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        get_logger().info(f"[CRON] Ciclo disparado ({reason}). Inspecionando conexoes de contas OAuth no OmniRoute...")
+        get_logger().info(f"[CRON] Ciclo disparado ({reason}). Inspecionando conexoes de contas OAuth...")
 
         try:
             res = self.sync_callback()
@@ -106,7 +111,7 @@ class CronScheduler:
 
         duration_ms = int((time.time() - start_ts) * 1000)
         refreshed = res.get("refreshed", 0) if isinstance(res, dict) else 0
-        total = res.get("total", 0) if isinstance(res, dict) else 0
+        total = res.get("total_connections", res.get("total", 0)) if isinstance(res, dict) else 0
 
         entry = {
             "timestamp": start_iso,

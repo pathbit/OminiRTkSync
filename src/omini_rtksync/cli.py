@@ -1,4 +1,4 @@
-"""CLI e orquestrador do OminiRTKSync para OmniRoute."""
+"""CLI e orquestrador deste sincronizador."""
 
 import argparse
 import os
@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from .config import Settings
+from .identidade import NOME_DO_GATEWAY, NOME_DO_PRODUTO
 from .credential_check import (
     STATE_INVALID,
     STATE_UNSUPPORTED,
@@ -20,17 +21,17 @@ from .credential_check import (
 )
 from .logs import get_logger, setup_logging
 from .cron import CronScheduler
-from .database import (
+from .gateway import (
     get_all_combos,
     get_all_connections,
     normalize_expiry_format,
     update_connection,
     update_connection_health,
 )
-from .discovery import HostDiscoveryEngine
+from .gateway import HostDiscoveryEngine
 from .normalizer import parse_expiry_to_ms
-from .providers import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
-from .web import start_omini_web
+from .gateway import ApiKeyProvider, GenericOAuthProvider, GoogleProvider, LocalProvider
+from .web import start_web_server
 
 
 # Prefixos que descrevem falha. Emitir tudo em INFO fazia com que
@@ -101,7 +102,7 @@ class OmniSyncEngine:
                     "timestamp": datetime.now(timezone.utc).isoformat()}
 
         conns = get_all_connections(self.settings.db_path)
-        log_msg("INFO", f"Inspecionando {len(conns)} conexões no OmniRoute ({self.settings.db_path})...")
+        log_msg("INFO", f"Inspecionando {len(conns)} conexões no gateway ({self.settings.db_path})...")
 
         refreshed = 0
         normalized = 0
@@ -125,7 +126,7 @@ class OmniSyncEngine:
 
             # Cura o formato de expiração para QUALQUER provedor OAuth, não só
             # para o ramo do Antigravity. Um epoch numérico em texto é Invalid
-            # Date para o OmniRoute; se a renovação falhar — refresh token
+            # Date para o gateway; se a renovação falhar — refresh token
             # revogado, client credentials ausentes — o valor ilegível
             # permanecia para sempre justamente no caso em que mais importa.
             bruto_expiracao = str(c.get("expiresAt") or "")
@@ -198,7 +199,7 @@ class OmniSyncEngine:
                         # Gravar só o resultado da sonda deixava para trás o
                         # `test_status='invalid'` de uma falha anterior, que não
                         # caduca sozinho. 'active' é o único valor que o
-                        # OmniRoute trata como saudável (clearAccountError), e é
+                        # o gateway trata como saudável (clearAccountError), e é
                         # o que a credencial acabou de provar que é.
                         update_connection_health(
                             self.settings.db_path,
@@ -372,7 +373,7 @@ def run_daemon(settings: Settings):
 
     def handle_signal(sig, frame):
         nonlocal running
-        print(f"\n[!] Sinal {sig} recebido. Encerrando OminiRTKSync...", flush=True)
+        print(f"\n[!] Sinal {sig} recebido. Encerrando {NOME_DO_PRODUTO}...", flush=True)
         running = False
 
     signal.signal(signal.SIGINT, handle_signal)
@@ -398,12 +399,12 @@ def run_daemon(settings: Settings):
     cron_scheduler = CronScheduler(
         sync_callback=engine.sync_all,
         interval_seconds=settings.cron_interval,
-        name="OminiRTKSync-CronScheduler",
+        name=f"{NOME_DO_PRODUTO}-CronScheduler",
     )
 
     if settings.enable_web:
         try:
-            start_omini_web(
+            start_web_server(
                 settings.web_host,
                 settings.web_port,
                 settings.db_path,
@@ -425,16 +426,16 @@ def run_daemon(settings: Settings):
         time.sleep(1)
 
     cron_scheduler.stop()
-    print("[*] OminiRTKSync encerrado.", flush=True)
+    print(f"[*] {NOME_DO_PRODUTO} encerrado.", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="ominirtksync",
-        description="OminiRTKSync · OmniRoute Universal Token & Connection Sync",
+        description=f"{NOME_DO_PRODUTO} · {NOME_DO_GATEWAY} Universal Token & Connection Sync",
     )
-    parser.add_argument("--db-path", dest="db_path", help="Caminho para o storage.sqlite do OmniRoute")
-    parser.add_argument("--status", action="store_true", help="Exibe status das conexões do OmniRoute e sai")
+    parser.add_argument("--db-path", dest="db_path", help=f"Caminho para o storage.sqlite do {NOME_DO_GATEWAY}")
+    parser.add_argument("--status", action="store_true", help=f"Exibe status das conexões do {NOME_DO_GATEWAY} e sai")
     parser.add_argument("--once", action="store_true", help="Executa uma rodada única de sincronização e sai")
     parser.add_argument("--daemon", action="store_true", help="Executa em modo daemon perpétuo")
     parser.add_argument("--interval", type=int, help="Intervalo de checagem em segundos (padrão: 300)")
@@ -497,7 +498,7 @@ def main():
     if args.once:
         engine = OmniSyncEngine(settings)
         res = engine.sync_all()
-        print(f"[*] Sincronização OmniRoute concluída: {res.get('total', 0)} conexões inspecionadas, {res.get('refreshed', 0)} renovadas.")
+        print(f"[*] Sincronização do {NOME_DO_GATEWAY} concluída: {res.get('total', 0)} conexões inspecionadas, {res.get('refreshed', 0)} renovadas.")
         return
 
     run_daemon(settings)

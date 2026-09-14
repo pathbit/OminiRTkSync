@@ -31,8 +31,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
+from .identidade import NOME_DO_PRODUTO
+
 DEFAULT_TIMEOUT_SECONDS = 8.0
-USER_AGENT = "OminiRTKSync-CredentialCheck/1.0"
+USER_AGENT = f"{NOME_DO_PRODUTO}-CredentialCheck/1.0"
 
 # States a probe can conclude. "not_checked" is the absence of a probe.
 STATE_VALID = "valid"

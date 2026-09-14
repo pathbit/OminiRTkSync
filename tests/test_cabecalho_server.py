@@ -12,10 +12,14 @@ no produto depende de publicá-la.
 """
 
 import pathlib
-import re
+import sys
 import unittest
 
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ / "src"))
+
+from omini_rtksync.web import DashboardHandler  # noqa: E402
+
 HANDLER = RAIZ / "src" / "omini_rtksync" / "web.py"
 
 PROIBIDO = ("python", "basehttp", "simplehttp", "wsgi")
@@ -23,15 +27,13 @@ PROIBIDO = ("python", "basehttp", "simplehttp", "wsgi")
 
 class CabecalhoServerNaoDenuncia(unittest.TestCase):
     def test_o_handler_declara_nome_proprio_e_versao_vazia(self):
-        fonte = HANDLER.read_text(encoding="utf-8")
-        self.assertRegex(
-            fonte,
-            r'server_version\s*=\s*"[^"]+"',
+        self.assertTrue(
+            DashboardHandler.server_version,
             "sem server_version o padrão do BaseHTTP anuncia a versão do Python",
         )
-        self.assertRegex(
-            fonte,
-            r'sys_version\s*=\s*""',
+        self.assertEqual(
+            DashboardHandler.sys_version,
+            "",
             "sys_version tem de ser vazio: é ele que carrega 'Python/3.x.y'",
         )
 
@@ -45,15 +47,12 @@ class CabecalhoServerNaoDenuncia(unittest.TestCase):
         )
 
     def test_o_nome_anunciado_nao_cita_a_pilha(self):
-        fonte = HANDLER.read_text(encoding="utf-8")
-        achado = re.search(r'server_version\s*=\s*"([^"]+)"', fonte)
-        self.assertIsNotNone(achado)
-        nome = achado.group(1).lower()
+        anunciado = DashboardHandler.server_version
         for proibido in PROIBIDO:
             self.assertNotIn(
                 proibido,
-                nome,
-                f"o nome anunciado ({achado.group(1)!r}) entrega a pilha",
+                anunciado.lower(),
+                f"o nome anunciado ({anunciado!r}) entrega a pilha",
             )
 
 

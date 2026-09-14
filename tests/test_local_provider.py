@@ -3,7 +3,7 @@
 import unittest
 import unittest.mock
 
-from omini_rtksync.providers import LocalProvider
+from omini_rtksync.gateway import LocalProvider
 
 
 class TestLocalProviderDetection(unittest.TestCase):
@@ -59,7 +59,7 @@ class TestModelDiscovery(unittest.TestCase):
 
     def test_unreachable_instance_stops_after_the_first_attempt(self):
         """Trying all three endpoints against a dead host just triples the timeout."""
-        with unittest.mock.patch("omini_rtksync.providers.urllib.request.urlopen",
+        with unittest.mock.patch("omini_rtksync.gateway.urllib.request.urlopen",
                         side_effect=OSError("Connection refused")) as urlopen:
             models, error = self.provider.discover_models("http://127.0.0.1:11434/v1")
         self.assertEqual(models, [])

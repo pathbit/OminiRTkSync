@@ -1,4 +1,4 @@
-"""Internacionalização da interface do OminiRTKSync.
+"""Internacionalização da interface do painel.
 
 Idioma padrão: inglês. Português e espanhol são opcionais e escolhidos pelo
 seletor de bandeiras no topo do painel. A escolha é persistida em SQLite
@@ -8,6 +8,8 @@ Chave ausente numa tradução cai para o inglês, nunca para a chave crua.
 """
 
 from typing import Dict
+
+from .identidade import NOME_DO_GATEWAY
 
 DEFAULT_LANGUAGE = "en"
 
@@ -20,7 +22,7 @@ LANGUAGES: Dict[str, tuple] = {
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "en": {
-        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.subtitle": f"{NOME_DO_GATEWAY} Universal Token &amp; Connection Synchronizer",
         "app.gateway_unset": "gateway not configured",
         "action.refresh": "Refresh",
         "action.access": "Access",
@@ -106,6 +108,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keys.enabled": "Accepted",
         "models.title": "Registered models",
         "models.empty": "No model synced from the gateway connections yet.",
+        "models.no_key": "The gateway issues no active key, and it only hands the model "
+                         "catalogue to a key it issued itself.",
+        "models.unreachable": "The gateway did not answer the model catalogue.",
         "models.showing": "Showing {shown} of {total} models — open the gateway for the full list.",
         "models.inherited": "Status, validity and last renewal come from the connection that serves this model.",
         "type.virtual_key": "Virtual key",
@@ -184,16 +189,16 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "sso.base_url": "Public panel address",
         "sso.base_url_help": "Exact public origin, no trailing slash. It must be stable: a Cloudflare quick tunnel gets a new address on every start and every registered return URL stops matching. Use a named tunnel or Tailscale.",
         "sso.redirect_uri": "Return address to register with the provider",
-        "sso.oidc_issuer": "Issuer",
-        "sso.oidc_client_id": "Client ID",
-        "sso.oidc_client_secret": "Client secret",
-        "sso.oidc_scopes": "Scopes",
+        "sso.issuer": "Issuer",
+        "sso.client_id": "Client ID",
+        "sso.client_secret": "Client secret",
+        "sso.scopes": "Scopes",
         "sso.secret_stored": "A secret is stored. Leave the field blank to keep it.",
         "sso.secret_missing": "No secret stored yet. Without one, SSO stays off.",
         "sso.secret_from_env": "The secret comes from the OIDC_CLIENT_SECRET environment variable. Change it there and restart the service.",
-        "sso.saml_entity_id": "Identity provider entity ID",
-        "sso.saml_sso_url": "Identity provider sign-on URL",
-        "sso.saml_cert": "Identity provider X.509 certificate",
+        "sso.idp_entity_id": "Identity provider entity ID",
+        "sso.idp_sso_url": "Identity provider sign-on URL",
+        "sso.idp_cert": "Identity provider X.509 certificate",
         "sso.saml_unavailable": "SAML 2.0 is not available in this image. It needs a library that signs and verifies XML, and doing it by hand would accept forged assertions in silence. The fields are here so the settings are ready when the image ships with it.",
         "sso.allowed_domains": "Allowed domains",
         "sso.allowed_emails": "Allowed e-mail addresses",
@@ -217,7 +222,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "sso.logout_note": "Signing out clears the panel session only. The session at the identity provider stays open, so the next click on the SSO button may not ask for a password again.",
     },
     "pt": {
-        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.subtitle": f"{NOME_DO_GATEWAY} Universal Token &amp; Connection Synchronizer",
         "app.gateway_unset": "gateway não configurado",
         "action.refresh": "Atualizar",
         "action.access": "Acesso",
@@ -303,6 +308,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keys.enabled": "Aceita",
         "models.title": "Modelos cadastrados",
         "models.empty": "Nenhum modelo sincronizado ainda a partir das conexões do gateway.",
+        "models.no_key": "O gateway não tem nenhuma chave ativa emitida, e ele só entrega o "
+                         "catálogo de modelos a uma chave que ele mesmo emitiu.",
+        "models.unreachable": "O gateway não respondeu ao catálogo de modelos.",
         "models.showing": "Mostrando {shown} de {total} modelos — a lista completa está no gateway.",
         "models.inherited": "Status, validade e última renovação vêm da conexão que serve este modelo.",
         "type.virtual_key": "Chave virtual",
@@ -381,16 +389,16 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "sso.base_url": "Endereço público do painel",
         "sso.base_url_help": "Origem pública exata, sem barra no fim. Precisa ser fixa: o túnel rápido da Cloudflare troca de endereço a cada subida e todo endereço de retorno registrado deixa de bater. Use túnel nomeado ou Tailscale.",
         "sso.redirect_uri": "Endereço de retorno a registrar no provedor",
-        "sso.oidc_issuer": "Issuer",
-        "sso.oidc_client_id": "ID do cliente",
-        "sso.oidc_client_secret": "Segredo do cliente",
-        "sso.oidc_scopes": "Escopos",
+        "sso.issuer": "Issuer",
+        "sso.client_id": "ID do cliente",
+        "sso.client_secret": "Segredo do cliente",
+        "sso.scopes": "Escopos",
         "sso.secret_stored": "Há um segredo guardado. Deixe o campo em branco para mantê-lo.",
         "sso.secret_missing": "Nenhum segredo guardado ainda. Sem ele, o SSO fica desligado.",
         "sso.secret_from_env": "O segredo vem da variável de ambiente OIDC_CLIENT_SECRET. Altere-o lá e reinicie o serviço.",
-        "sso.saml_entity_id": "Entity ID do provedor de identidade",
-        "sso.saml_sso_url": "URL de entrada do provedor de identidade",
-        "sso.saml_cert": "Certificado X.509 do provedor de identidade",
+        "sso.idp_entity_id": "Entity ID do provedor de identidade",
+        "sso.idp_sso_url": "URL de entrada do provedor de identidade",
+        "sso.idp_cert": "Certificado X.509 do provedor de identidade",
         "sso.saml_unavailable": "SAML 2.0 não está disponível nesta imagem. Ele exige uma biblioteca que assina e confere XML, e fazer isso à mão aceitaria asserção forjada em silêncio. Os campos ficam aqui para que a configuração já esteja pronta quando a imagem trouxer a biblioteca.",
         "sso.allowed_domains": "Domínios autorizados",
         "sso.allowed_emails": "E-mails autorizados",
@@ -414,7 +422,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "sso.logout_note": "Sair apaga apenas a sessão do painel. A sessão no provedor de identidade continua aberta, então o clique seguinte no botão de SSO pode não pedir senha de novo.",
     },
     "es": {
-        "app.subtitle": "OmniRoute Universal Token &amp; Connection Synchronizer",
+        "app.subtitle": f"{NOME_DO_GATEWAY} Universal Token &amp; Connection Synchronizer",
         "app.gateway_unset": "gateway no configurado",
         "action.refresh": "Actualizar",
         "action.access": "Acceso",
@@ -500,6 +508,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keys.enabled": "Aceptada",
         "models.title": "Modelos registrados",
         "models.empty": "Todavía no hay modelos sincronizados desde las conexiones del gateway.",
+        "models.no_key": "El gateway no tiene ninguna clave activa emitida, y solo entrega el "
+                         "catálogo de modelos a una clave emitida por él mismo.",
+        "models.unreachable": "El gateway no respondió al catálogo de modelos.",
         "models.showing": "Mostrando {shown} de {total} modelos — la lista completa está en el gateway.",
         "models.inherited": "El estado, la validez y la última renovación vienen de la conexión que sirve este modelo.",
         "type.virtual_key": "Clave virtual",
@@ -578,16 +589,16 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "sso.base_url": "Dirección pública del panel",
         "sso.base_url_help": "Origen público exacto, sin barra final. Tiene que ser fija: el túnel rápido de Cloudflare cambia de dirección en cada arranque y toda dirección de retorno registrada deja de coincidir. Use un túnel con nombre o Tailscale.",
         "sso.redirect_uri": "Dirección de retorno que se registra en el proveedor",
-        "sso.oidc_issuer": "Issuer",
-        "sso.oidc_client_id": "ID de cliente",
-        "sso.oidc_client_secret": "Secreto de cliente",
-        "sso.oidc_scopes": "Ámbitos",
+        "sso.issuer": "Issuer",
+        "sso.client_id": "ID de cliente",
+        "sso.client_secret": "Secreto de cliente",
+        "sso.scopes": "Ámbitos",
         "sso.secret_stored": "Hay un secreto guardado. Deje el campo en blanco para conservarlo.",
         "sso.secret_missing": "Todavía no hay secreto guardado. Sin él, el SSO permanece apagado.",
         "sso.secret_from_env": "El secreto viene de la variable de entorno OIDC_CLIENT_SECRET. Cámbielo allí y reinicie el servicio.",
-        "sso.saml_entity_id": "Entity ID del proveedor de identidad",
-        "sso.saml_sso_url": "URL de acceso del proveedor de identidad",
-        "sso.saml_cert": "Certificado X.509 del proveedor de identidad",
+        "sso.idp_entity_id": "Entity ID del proveedor de identidad",
+        "sso.idp_sso_url": "URL de acceso del proveedor de identidad",
+        "sso.idp_cert": "Certificado X.509 del proveedor de identidad",
         "sso.saml_unavailable": "SAML 2.0 no está disponible en esta imagen. Requiere una biblioteca que firme y verifique XML, y hacerlo a mano aceptaría aserciones falsificadas en silencio. Los campos quedan aquí para que la configuración esté lista cuando la imagen traiga la biblioteca.",
         "sso.allowed_domains": "Dominios autorizados",
         "sso.allowed_emails": "Correos autorizados",
