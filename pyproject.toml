@@ -29,6 +29,10 @@ classifiers = [
 # SAML aparece desabilitada e o painel recusa liga-lo.
 [project.optional-dependencies]
 saml = ["python3-saml>=1.16"]
+test = [
+    "docker>=7.0.0",
+    "testcontainers>=4.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/pathbit/OminiRTkSync"
