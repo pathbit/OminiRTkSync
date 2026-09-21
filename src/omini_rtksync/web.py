@@ -584,6 +584,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Formulário de entrada: a porta do navegador para o painel."""
         self.respond_html(self.pagina_de_login(self.resolve_language(), erro, mensagem=mensagem))
 
+    def eh_conexao_segura(self) -> bool:
+        """Determina se a requisição veio por canal seguro (HTTPS).
+
+        Detecta via proxy reverso (cabeçalhos X-Forwarded-Proto, X-Forwarded-Scheme,
+        X-Forwarded-Ssl, Front-End-Https) ou quando o SSO foi configurado com uma
+        base_url https://.
+        """
+        proto = (self.headers.get("X-Forwarded-Proto") or "").lower().strip()
+        if proto == "https":
+            return True
+        scheme = (self.headers.get("X-Forwarded-Scheme") or "").lower().strip()
+        if scheme == "https":
+            return True
+        if (self.headers.get("X-Forwarded-Ssl") or "").lower().strip() == "on":
+            return True
+        if (self.headers.get("Front-End-Https") or "").lower().strip() == "on":
+            return True
+        try:
+            cfg = self.configuracao_sso()
+            if cfg and str(cfg.get("base_url") or "").lower().strip().startswith("https://"):
+                return True
+        except Exception:
+            pass
+        return False
+
     def handle_login(self) -> None:
         """Valida a credencial do formulário e emite o cookie de sessão."""
         endereco = protecao.endereco_do_cliente(self.client_address)
@@ -632,7 +657,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         protecao.limpa_apos_sucesso(endereco)
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", "/")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(usuario)))
+        seguro = self.eh_conexao_segura()
+        self.send_header(
+            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir(usuario), seguro=seguro)
+        )
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -642,8 +670,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.authenticated_user = ""
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", "/login?logout=1")
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar())
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
+        seguro = self.eh_conexao_segura()
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar(seguro=seguro))
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado(seguro=seguro))
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Content-Length", "0")
@@ -688,7 +717,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(corpo)))
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
+        seguro = self.eh_conexao_segura()
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado(seguro=seguro))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.write_body(corpo)
@@ -711,11 +741,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(corpo)))
+        seguro = self.eh_conexao_segura()
         self.send_header(
-            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir("sso:" + email))
+            "Set-Cookie", sessao.cabecalho_para_gravar(sessao.emitir("sso:" + email), seguro=seguro)
         )
         # O cookie de ida já cumpriu o papel: uso único.
-        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado())
+        self.send_header("Set-Cookie", sessao.cabecalho_para_apagar_estado(seguro=seguro))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.write_body(corpo)
@@ -824,10 +855,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", destino)
+        seguro = self.eh_conexao_segura()
         self.send_header(
             "Set-Cookie",
             sessao.cabecalho_para_gravar_estado(
-                sessao.emitir_estado_sso(state, nonce, verificador)
+                sessao.emitir_estado_sso(state, nonce, verificador),
+                seguro=seguro,
             ),
         )
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
@@ -1225,9 +1258,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", destino)
+        seguro = self.eh_conexao_segura()
+        s = "; Secure" if seguro else ""
         self.send_header(
             "Set-Cookie",
-            f"rtksync_lang={escolhido}; Path=/; Max-Age=31536000; SameSite=Lax",
+            f"rtksync_lang={escolhido}; Path=/; Max-Age=31536000; SameSite=Lax{s}",
         )
         self.send_header("Content-Length", "0")
         self.end_headers()

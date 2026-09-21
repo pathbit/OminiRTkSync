@@ -67,6 +67,37 @@ class TestOminiWebAuth(unittest.TestCase):
             self.assertEqual(data["status"], "online")
             self.assertEqual(data["currentUser"], "admin")
 
+    def test_login_cookie_with_x_forwarded_proto_includes_secure(self):
+        """When behind an HTTPS reverse proxy (X-Forwarded-Proto: https), cookies must be Secure."""
+        import http.client
+        import urllib.parse
+        conn = http.client.HTTPConnection("127.0.0.1", self.settings.web_port, timeout=3.0)
+        body = urllib.parse.urlencode({"usuario": "admin", "senha": "testpassword"})
+        conn.request("POST", "/login", body=body, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Forwarded-Proto": "https",
+        })
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 302)
+        cookie = resp.headers.get("Set-Cookie", "")
+        self.assertIn("; Secure", cookie)
+        conn.close()
+
+    def test_login_cookie_without_x_forwarded_proto_no_secure(self):
+        """When accessed over local plain HTTP without reverse proxy, cookies omit Secure."""
+        import http.client
+        import urllib.parse
+        conn = http.client.HTTPConnection("127.0.0.1", self.settings.web_port, timeout=3.0)
+        body = urllib.parse.urlencode({"usuario": "admin", "senha": "testpassword"})
+        conn.request("POST", "/login", body=body, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 302)
+        cookie = resp.headers.get("Set-Cookie", "")
+        self.assertNotIn("Secure", cookie)
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,9 +27,13 @@ class TestPasswordStrength(unittest.TestCase):
         self.assertIn("password.needs_digit", problems)
         self.assertIn("password.needs_special", problems)
 
-    def test_six_characters_is_the_floor(self):
-        self.assertIn("password.too_short", validate_password_strength("Ab1!c"))
-        self.assertEqual(validate_password_strength("Ab1!cd"), [])
+    def test_eight_characters_is_the_floor(self):
+        self.assertIn("password.too_short", validate_password_strength("Ab1!cde"))
+        self.assertEqual(validate_password_strength("Ab1!cdef"), [])
+
+    def test_twenty_characters_is_the_ceiling(self):
+        self.assertEqual(validate_password_strength("Ab1!" + "x" * 16), [])
+        self.assertIn("password.too_long", validate_password_strength("Ab1!" + "x" * 17))
 
     def test_each_class_is_required(self):
         self.assertEqual(validate_password_strength("ABC123!@"), ["password.needs_lower"])
