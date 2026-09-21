@@ -5,6 +5,8 @@ on:
     branches: ["master"]
     paths:
       - "src/**"
+      - "Dockerfile"
+      - "pyproject.toml"
     tags: ["v*.*.*"]
   workflow_dispatch:
 
@@ -118,7 +120,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           owner: ${{ github.repository_owner }}
           packages: ominirtksync
-          keep-n-tagged: 3
+          keep-n-tagged: 2
           exclude-tags: latest
           delete-untagged: true
           delete-ghost-images: true
