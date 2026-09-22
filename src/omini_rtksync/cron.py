@@ -101,7 +101,6 @@ class CronScheduler:
         start_ts = time.time()
         start_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         get_logger().info(f"[CRON] Ciclo disparado ({reason}). Inspecionando conexoes de contas OAuth...")
 
         try:

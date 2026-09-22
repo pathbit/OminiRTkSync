@@ -10,6 +10,9 @@ import unittest
 import urllib.error
 import urllib.request
 
+from omini_rtksync.config import Settings
+from omini_rtksync import web as web_server
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     """Nao segue o 303: o teste precisa ver a resposta, nao o destino."""
@@ -17,9 +20,6 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
-
-from omini_rtksync.config import Settings
-from omini_rtksync import web as web_server
 
 PORT = 19394
 BASE = f"http://127.0.0.1:{PORT}"
