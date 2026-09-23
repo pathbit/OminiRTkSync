@@ -29,9 +29,11 @@ def make_conn(provider: str, name: str, data: dict) -> ConnectionRecord:
 
 class TestRenderHelpers(unittest.TestCase):
     def test_duration_formatting(self):
-        self.assertEqual(render.format_duration(None), "Unlimited / N/A")
+        self.assertEqual(render.format_duration(None), "Ilimitado / N/A")
+        self.assertEqual(render.format_duration(None, "en"), "Unlimited / N/A")
         self.assertEqual(render.format_duration(None, "pt"), "Ilimitado / N/A")
-        self.assertEqual(render.format_duration(0), "Expired")
+        self.assertEqual(render.format_duration(0), "Expirado")
+        self.assertEqual(render.format_duration(0, "en"), "Expired")
         self.assertEqual(render.format_duration(-5, "es"), "Expirado")
         self.assertEqual(render.format_duration(45), "45s")
         self.assertEqual(render.format_duration(1440), "24 min")
@@ -49,7 +51,8 @@ class TestRenderHelpers(unittest.TestCase):
             "refreshToken": "ref",
             "expiresAt": now_ms + (24 * 60 * 1000),
         })
-        self.assertIn("Outside the 15 min margin", render.render_refresh_reason(conn, 900))
+        self.assertIn("Fora da margem de 15 min", render.render_refresh_reason(conn, 900))
+        self.assertIn("Outside the 15 min margin", render.render_refresh_reason(conn, 900, "en"))
         reason_pt = render.render_refresh_reason(conn, refresh_margin=900, lang="pt")
         self.assertIn("Fora da margem de 15 min", reason_pt)
         self.assertIn("renovação prevista", reason_pt)
@@ -60,7 +63,8 @@ class TestRenderHelpers(unittest.TestCase):
             "accessToken": "tok", "refreshToken": "ref",
             "expiresAt": now_ms + (5 * 60 * 1000),
         })
-        self.assertIn("Within the 15 min margin", render.render_refresh_reason(conn, 900))
+        self.assertIn("Dentro da margem", render.render_refresh_reason(conn, 900))
+        self.assertIn("Within the 15 min margin", render.render_refresh_reason(conn, 900, "en"))
         self.assertIn("Dentro da margem", render.render_refresh_reason(conn, 900, "pt"))
 
     def test_refresh_reason_for_expired_and_apikey(self):
@@ -68,10 +72,12 @@ class TestRenderHelpers(unittest.TestCase):
         expired = make_conn("antigravity", "AG", {
             "accessToken": "t", "refreshToken": "r", "expiresAt": now_ms - 1000,
         })
-        self.assertIn("expired", render.render_refresh_reason(expired, 900).lower())
+        self.assertIn("expirad", render.render_refresh_reason(expired, 900).lower())
+        self.assertIn("expired", render.render_refresh_reason(expired, 900, "en").lower())
 
         apikey = make_conn("groq", "Groq", {"apiKey": "gsk-xxx"})
-        self.assertIn("never expires", render.render_refresh_reason(apikey, 900))
+        self.assertIn("não expira", render.render_refresh_reason(apikey, 900))
+        self.assertIn("never expires", render.render_refresh_reason(apikey, 900, "en"))
         self.assertIn("não expira", render.render_refresh_reason(apikey, 900, "pt"))
 
     def test_local_instance_reason_reports_models(self):
@@ -82,7 +88,8 @@ class TestRenderHelpers(unittest.TestCase):
             "discoveredModels": ["llama3.2:3b", "qwen2.5-coder:7b"],
         })
         self.assertTrue(local.is_local)
-        self.assertIn("2 model(s)", render.render_refresh_reason(local, 900))
+        self.assertIn("2 modelo(s)", render.render_refresh_reason(local, 900))
+        self.assertIn("2 model(s)", render.render_refresh_reason(local, 900, "en"))
 
     def test_unreachable_local_instance_is_reported(self):
         # Quem diz que a instancia nao respondeu e a sonda, gravada em
@@ -93,7 +100,8 @@ class TestRenderHelpers(unittest.TestCase):
             "apiKey": "k", "baseUrl": "http://localhost:11434/v1",
             "testStatus": "unreachable",
         })
-        self.assertIn("did not answer", render.render_refresh_reason(local, 900))
+        self.assertIn("não respondeu", render.render_refresh_reason(local, 900))
+        self.assertIn("did not answer", render.render_refresh_reason(local, 900, "en"))
 
     def test_an_empty_catalog_is_not_called_unreachable(self):
         local = make_conn("ollama-local", "Ollama Local", {
@@ -101,8 +109,9 @@ class TestRenderHelpers(unittest.TestCase):
             "testStatus": "active", "discoveredModels": [],
         })
         frase = render.render_refresh_reason(local, 900)
-        self.assertNotIn("did not answer", frase)
-        self.assertIn("no model installed", frase)
+        self.assertNotIn("não respondeu", frase)
+        self.assertIn("nenhum modelo instalado", frase)
+        self.assertIn("no model installed", render.render_refresh_reason(local, 900, "en"))
 
 
 class TestDashboardMarkup(unittest.TestCase):
@@ -171,19 +180,20 @@ class TestDashboardMarkup(unittest.TestCase):
         self.assertIn('action="/acoes/testar-gateway"', page)
 
     def test_security_banner_appears_only_with_default_password(self):
-        self.assertIn("Security warning", self._page(is_default_password=True))
-        self.assertNotIn("Security warning", self._page(is_default_password=False))
+        self.assertIn("Atenção de segurança", self._page(is_default_password=True))
+        self.assertNotIn("Atenção de segurança", self._page(is_default_password=False))
+        self.assertIn("Security warning", self._page(is_default_password=True, lang="en"))
 
-    def test_default_language_is_english_with_pt_and_es_available(self):
+    def test_default_language_is_portuguese_with_en_and_es_available(self):
         page = self._page()
-        self.assertIn('lang="en"', page)
-        self.assertIn("Monitored connections", page)
+        self.assertIn('lang="pt"', page)
+        self.assertIn("Conexões monitoradas", page)
         self.assertIn("flag-icons", page)
-        for flag in ("fi-us", "fi-br", "fi-es"):
+        for flag in ("fi-br", "fi-us", "fi-es"):
             self.assertIn(flag, page)
 
-    def test_page_renders_in_portuguese_and_spanish(self):
-        self.assertIn("Conexões monitoradas", self._page(lang="pt"))
+    def test_page_renders_in_english_and_spanish(self):
+        self.assertIn("Monitored connections", self._page(lang="en"))
         self.assertIn("Conexiones monitoreadas", self._page(lang="es"))
 
     def test_local_connection_shows_base_url_and_models(self):
@@ -236,10 +246,11 @@ class TestDashboardMarkup(unittest.TestCase):
 
     def test_empty_state_renders(self):
         page = self._page(connections=[], combos=[])
-        self.assertIn("No connection registered", page)
-        self.assertIn("No fallback combo", page)
-        page_pt = self._page(connections=[], combos=[], lang="pt")
-        self.assertIn("Nenhuma conexão registrada", page_pt)
+        self.assertIn("Nenhuma conexão registrada", page)
+        self.assertIn("Nenhum combo de fallback", page)
+        page_en = self._page(connections=[], combos=[], lang="en")
+        self.assertIn("No connection registered", page_en)
+        self.assertIn("No fallback combo", page_en)
 
 
 class TestDashboardOverHttp(unittest.TestCase):
