@@ -1,6 +1,7 @@
 # Installation
 
 Two supported paths: Docker (recommended) and a local Python virtual environment.
+For a complete guide covering Docker run, Compose, Headroom, Caveman, Tunnel, and Tailscale, see [Docker Deployment](Docker-Deployment).
 
 ---
 
