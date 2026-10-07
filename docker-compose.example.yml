@@ -188,6 +188,27 @@ services:
     networks:
       - ominirtksync-net
 
+  # --- Otimizacao de tokens (opcional) --------------------------------------
+  #
+  # Comprime payloads de contexto e reduz custos de tokens para agentes de IA (Claude
+  # Code, Cursor, Windsurf) intermediando chamadas antes do gateway:
+  #   docker compose --profile headroom up -d
+  ominirtk-headroom:
+    image: ghcr.io/headroomlabs-ai/headroom:latest
+    container_name: ominirtk-headroom
+    hostname: ominirtk-headroom
+    profiles: ["headroom"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      - UPSTREAM_URL=http://ominirtk-router:20128
+      - PORT=8787
+    networks:
+      - ominirtksync-net
+    depends_on:
+      - ominirtk-router
+
 volumes:
   ominirtk_tailnet:
   omniroute_data:
